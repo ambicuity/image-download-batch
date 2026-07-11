@@ -1,0 +1,305 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Welcome — Image Download - Batch</title>
+  <link rel="icon" type="image/png" href="icon128.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      background: #09090b;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #e4e4e7;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Subtle grain texture overlay */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      opacity: 0.035;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      background-size: 256px 256px;
+      z-index: 1;
+    }
+
+      /* Radial glow behind content */
+      body::after {
+        content: "";
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        width: 900px;
+        height: 900px;
+        transform: translate(-50%, -50%);
+        background: radial-gradient(circle, rgba(244,162,97,0.06) 0%, transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+    .container {
+      position: relative;
+      z-index: 2;
+      max-width: 580px;
+      padding: 56px 44px;
+      text-align: center;
+      background: rgba(18,18,20,0.60);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+
+    .icon {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 28px;
+      background: rgba(244,162,97,0.08);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(244,162,97,0.15);
+      position: relative;
+    }
+    .icon::before {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, rgba(244,162,97,0.20), transparent 60%);
+      z-index: -1;
+      opacity: 0.6;
+    }
+    .icon svg { width: 32px; height: 32px; }
+
+    h1 {
+      font-family: 'Playfair Display', 'Georgia', serif;
+      font-size: 30px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    h1 .accent {
+      color: #f4a261;
+      text-shadow: 0 0 24px rgba(244,162,97,0.25);
+    }
+
+    .subtitle {
+      font-size: 13.5px;
+      color: #a1a1aa;
+      margin-bottom: 40px;
+      line-height: 1.6;
+      max-width: 420px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .features {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 40px;
+      text-align: left;
+    }
+
+    .feature {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      background: rgba(24,24,27,0.50);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 10px;
+      padding: 16px 18px;
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    }
+    .feature:hover {
+      background: rgba(24,24,27,0.80);
+      border-color: rgba(244,162,97,0.12);
+      transform: translateY(-1px);
+    }
+
+    .feature-icon {
+      flex-shrink: 0;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(244,162,97,0.08);
+      border: 1px solid rgba(244,162,97,0.12);
+    }
+    .feature-icon svg {
+      width: 18px;
+      height: 18px;
+      stroke: #f4a261;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .feature h3 {
+      font-family: 'Playfair Display', 'Georgia', serif;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #e4e4e7;
+    }
+    .feature p {
+      font-size: 12px;
+      color: #71717a;
+      line-height: 1.45;
+    }
+
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 32px;
+      background: #f4a261;
+      color: #09090b;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 13px;
+      font-family: 'Playfair Display', 'Georgia', serif;
+      letter-spacing: 0.02em;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 2px 10px rgba(244,162,97,0.25);
+    }
+    .cta:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 22px rgba(244,162,97,0.35);
+      background: #d97706;
+    }
+
+    .shortcut {
+      margin-top: 22px;
+      font-size: 11.5px;
+      color: #52525b;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .shortcut kbd {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #a1a1aa;
+    }
+
+    .footer {
+      margin-top: 36px;
+      font-size: 11px;
+      color: #52525b;
+    }
+    .footer a {
+      color: #f4a261;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .footer a:hover { text-decoration: underline; }
+
+    /* Decorative animated grid lines behind container */
+    .grid-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.25;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-bg"></div>
+  <div class="container">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#f4a261" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M15 8h.01"/>
+        <path d="M3 6a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v12a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3v-12"/>
+        <path d="M3 16l5 -5c.928 -.893 2.072 -.893 3 0l5 5"/>
+        <path d="M14 14l1 -1c.928 -.893 2.072 -.893 3 0l3 3"/>
+      </svg>
+    </div>
+
+    <h1>Image Download <span class="accent">- Batch</span></h1>
+    <p class="subtitle" messagesKey="welcomeSubtitle">Discover, filter, and batch download every image on any web page — fast, private, and completely offline.</p>
+
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f4a261" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        </div>
+        <div>
+          <h3 messagesKey="welcomeFeature1Title">Smart Discovery</h3>
+          <p messagesKey="welcomeFeature1Desc">Finds images from &lt;img&gt; tags, CSS backgrounds, srcsets, SVGs, shadow DOM, and lazy-loaded content.</p>
+        </div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f4a261" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v2.17a3 3 0 0 1 -.76 2l-5.24 5.76v4a3 3 0 0 1 -.76 2l-2 2.17a3 3 0 0 1 -2.48 1h-.52a3 3 0 0 1 -2.48 -1l-2 -2.17a3 3 0 0 1 -.76 -2v-4l-5.24 -5.76a3 3 0 0 1 -.76 -2v-2.17z"/></svg>
+        </div>
+        <div>
+          <h3 messagesKey="welcomeFeature2Title">Advanced Filters</h3>
+          <p messagesKey="welcomeFeature2Desc">Filter by size, type, or URL pattern. Sort and select exactly what you need.</p>
+        </div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f4a261" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2"/><path d="M7 11l5 5l5 -5"/><path d="M12 4l0 12"/></svg>
+        </div>
+        <div>
+          <h3 messagesKey="welcomeFeature3Title">Batch Download</h3>
+          <p messagesKey="welcomeFeature3Desc">Download selected images individually or as a ZIP archive. Custom naming and subfolder support.</p>
+        </div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f4a261" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <div>
+          <h3 messagesKey="welcomeFeature4Title">100% Private</h3>
+          <p messagesKey="welcomeFeature4Desc">All processing happens locally. No data sent to external servers. No tracking. No analytics.</p>
+        </div>
+      </div>
+    </div>
+
+    <button class="cta" id="getStartedButton" type="button" autofocus>
+      <span messagesKey="welcomeGetStarted">Get Started</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+    </button>
+
+    <div class="shortcut">
+      <span messagesKey="welcomeShortcutLabel">Open anytime with</span> <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Y</kbd>
+      <span style="margin-left: 6px; color: #3f3f46;">(Mac: <kbd>Cmd</kbd><kbd>Shift</kbd><kbd>Y</kbd>)</span>
+    </div>
+
+    <div class="footer">
+      <p>by <a href="https://buymeacoffee.com/ritesh.rana" target="_blank" rel="noopener noreferrer">Ritesh Rana</a> · contact@riteshrana.engineer</p>
+    </div>
+  </div>
+  <script src="welcome.js"></script>
+</body>
+</html>

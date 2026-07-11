@@ -1,0 +1,115 @@
+{
+   "appDesc": {
+      "message": "Find, preview, filter, and batch download images from web pages."
+   },
+   "appName": {
+      "message": "Image Download - Batch"
+   },
+   "cancel": {
+      "message": "Cancel"
+   },
+   "deselectall": {
+      "message": "Deselect all"
+   },
+   "donotshowdialogagain": {
+      "message": "Do not show this dialog again"
+   },
+   "download": {
+      "message": "Download"
+   },
+   "filterbyurlinputplaceholder": {
+      "message": "Filter by url or name"
+   },
+   "foundLabel": {
+      "message": "Found %n images",
+      "translation_note": "leave the '%n', it will be replaces with the number of images found, ie 'Found 22 images'"
+   },
+   "heightLabel": {
+      "message": "height",
+      "translation_note": "the height is intended as the pixel 'height' of the image"
+   },
+   "makesurechrome": {
+      "message": "Make sure you don't have selected the 'Ask where to save each file before downloading' checkbox in <a id='saveaslink' href='#' target='_blank'>Chrome Settings --> Advanced --> Download section.</a>"
+   },
+   "makesurefirefox": {
+      "message": "Make sure you don't have selected the 'Always ask where to save files' checkbox in Firefox Settings --> Files and Applications section."
+   },
+   "manyfilesnum": {
+      "message": "Download %n img",
+      "translation_note": "leave the '%n', it will be replaces with the number of download images , ie 'Download 22 images'"
+   },
+   "openinnewtab": {
+      "message": "Open in new tab"
+   },
+   "otherwisechrome": {
+      "message": "Otherwise Chrome by design will popup the Save as... dialog for each file :-("
+   },
+   "otherwisefirefox": {
+      "message": "Otherwise Firefox by design will popup the Save as... dialog for each file :-("
+   },
+   "searchingImagesLabel": {
+      "message": "Searching images..."
+   },
+   "searchsimilarimgs": {
+      "message": "Reverse Image Search by Google"
+   },
+   "selectall": {
+      "message": "Select all"
+   },
+   "stopImageSearchLabel": {
+      "message": "Stop image search"
+   },
+   "welcomeFeature1Desc": {
+      "message": "Finds images from <img> tags, CSS backgrounds, srcsets, SVGs, shadow DOM, and lazy-loaded content."
+   },
+   "welcomeFeature1Title": {
+      "message": "Smart Discovery"
+   },
+   "welcomeFeature2Desc": {
+      "message": "Filter by size, type, or URL pattern. Sort and select exactly what you need."
+   },
+   "welcomeFeature2Title": {
+      "message": "Advanced Filters"
+   },
+   "welcomeFeature3Desc": {
+      "message": "Download selected images individually or as a ZIP archive. Custom naming and subfolder support."
+   },
+   "welcomeFeature3Title": {
+      "message": "Batch Download"
+   },
+   "welcomeFeature4Desc": {
+      "message": "All processing happens locally. No data sent to external servers. No tracking. No analytics."
+   },
+   "welcomeFeature4Title": {
+      "message": "100% Private"
+   },
+   "welcomeGetStarted": {
+      "message": "Get Started"
+   },
+   "welcomePageTitle": {
+      "message": "Welcome — Image Download - Batch"
+   },
+   "welcomeShortcutLabel": {
+      "message": "Open anytime with",
+      "translation_note": "followed by the keyboard shortcut keys (Ctrl + Shift + Y), which are not translated"
+   },
+   "welcomeSubtitle": {
+      "message": "Discover, filter, and batch download every image on any web page — fast, private, and completely offline."
+   },
+   "widthLabel": {
+      "message": "width",
+      "translation_note": "the width is intended as the pixel 'width' of the image"
+   },
+   "filenameTokensHint": {
+      "message": "Tokens: {name} {index} {index:3} {ext} {domain} {date} {time} {year} {month} {day} {timestamp}"
+   },
+   "preferFullResLabel": {
+      "message": "Prefer full resolution (grab largest)"
+   },
+   "downloadAllImagesMenu": {
+      "message": "Download all images on this page"
+   },
+   "preferencesLabel": {
+      "message": "Preferences"
+   }
+}

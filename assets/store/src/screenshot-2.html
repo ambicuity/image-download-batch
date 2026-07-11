@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="/assets/store/src/brand.css">
+<style>
+  body{width:1280px;height:800px;}
+  .stage{width:1280px;height:800px;padding:58px 90px;display:flex;flex-direction:column;}
+  .kicker{font-size:13px;}
+  h1{font-size:62px;margin-top:16px;max-width:900px;}
+  .lead{color:var(--text-2);font-size:19px;font-weight:500;line-height:1.55;margin-top:20px;max-width:760px;}
+  .compare{margin-top:36px;display:flex;align-items:center;gap:44px;}
+  .frame{background:var(--bg-card);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 30px 70px rgba(0,0,0,.5);}
+  .frame .lbl{font-size:12px;color:var(--muted);letter-spacing:.06em;margin:4px 4px 10px;display:flex;justify-content:space-between;}
+  .frame img{border-radius:10px;object-fit:cover;display:block;}
+  .small img{width:128px;height:128px;filter:saturate(.9) brightness(.92);}
+  .small{opacity:.72;}
+  .big img{width:300px;height:300px;}
+  .big{border-color:var(--accent);box-shadow:0 30px 80px var(--accent-glow),0 0 0 1px var(--accent);}
+  .big .lbl{color:var(--accent);}
+  .arrow{display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--accent);}
+  .arrow .a{font-size:40px;}
+  .arrow .t{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-2);}
+  .chips{display:flex;gap:12px;margin-top:38px;}
+  .chip{font-size:14px;}
+</style></head>
+<body><div class="stage">
+  <div class="kicker">Prefer full resolution</div>
+  <h1 class="serif">Stop saving thumbnails<span class="accent-underline">.</span></h1>
+  <div class="lead">One toggle rewrites downscaled URLs to their largest originals — so you keep the real image, not the preview.</div>
+  <div class="compare">
+    <div class="frame small">
+      <div class="lbl"><span>thumbnail</span><span>?w=150</span></div>
+      <img src="/onboarding_2.jpg">
+    </div>
+    <div class="arrow"><div class="a">→</div><div class="t">upgrade</div></div>
+    <div class="frame big">
+      <div class="lbl"><span>full resolution</span><span>original</span></div>
+      <img src="/onboarding_2.jpg">
+    </div>
+    <div style="margin-left:20px;max-width:300px;color:var(--text-2);font-size:15px;line-height:1.6;">
+      Recognises <b style="color:var(--text)">Cloudinary</b>, <b style="color:var(--text)">Shopify</b>,
+      <b style="color:var(--text)">WordPress</b>, <b style="color:var(--text)">Imgix</b>, and
+      <b style="color:var(--text)">retina&nbsp;@2x/@3x</b> — then collapses size variants to the largest.
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip"><span class="dot"></span>Cloudinary</span>
+    <span class="chip"><span class="dot"></span>Shopify</span>
+    <span class="chip"><span class="dot"></span>WordPress</span>
+    <span class="chip"><span class="dot"></span>Imgix</span>
+    <span class="chip"><span class="dot"></span>@2x / @3x</span>
+  </div>
+</div></body></html>

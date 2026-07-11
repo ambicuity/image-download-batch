@@ -1,0 +1,40 @@
+{
+   "action": {
+      "default_icon": {
+         "16": "icon16.png",
+         "48": "icon48.png",
+         "128": "icon128.png"
+      },
+      "default_popup": "popup.html"
+   },
+   "author": "Ritesh Rana",
+   "background": {
+      "service_worker": "bg-entry.js"
+   },
+   "commands": {
+      "_execute_action": {
+         "suggested_key": {
+            "default": "Ctrl+Shift+Y",
+            "mac": "Command+Shift+Y"
+         }
+      }
+   },
+   "content_scripts": [ {
+      "exclude_matches": [ "*://*/*.json", "*://*/*.pdf", "*://*/*.jpeg", "*://*/*.jpg", "*://*/*.png", "*://*/*.svg" ],
+      "js": [ "inject.js" ],
+      "matches": [ "http://*/*", "https://*/*" ]
+   } ],
+   "default_locale": "en",
+   "description": "__MSG_appDesc__",
+   "host_permissions": [ "http://*/*", "https://*/*" ],
+   "icons": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+   },
+   "manifest_version": 3,
+   "name": "__MSG_appName__",
+   "permissions": [ "downloads", "storage", "scripting", "declarativeNetRequest", "sidePanel", "contextMenus" ],
+   "short_name": "Image Download",
+   "version": "1.0.0"
+}

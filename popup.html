@@ -1,0 +1,397 @@
+<!doctype html>
+<!--
+  Image Download - Batch
+  Created by Ritesh Rana
+  contact@riteshrana.engineer
+  https://buymeacoffee.com/ritesh.rana
+ -->
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#060608">
+    <title>Image Download - Batch</title>
+    <link rel="stylesheet" type="text/css" href="external/jquery-ui.min.css">
+
+    <link rel="stylesheet" type="text/css" href="popup.css">
+</head>
+
+<body>
+<div id="grainOverlay"></div>
+<div id="bootLoading">
+  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f4a261" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 8h.01"/><path d="M3 6a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v12a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3v-12"/><path d="M3 16l5 -5c.928 -.893 2.072 -.893 3 0l5 5"/><path d="M14 14l1 -1c.928 -.893 2.072 -.893 3 0l3 3"/></svg>
+  <span class="bootLoading__text">Initializing darkroom...</span>
+</div>
+<div id="container">
+    <div class="statusdivcontainer">
+        <div id="statusdiv" style="padding: 8px 0px 8px 0px;">
+            <table style="width:100%;" cellspacing="0" cellpadding="0">
+                <tr>
+                    <td>
+                        <div id="foundimagesinnerdiv" aria-live="polite">
+                            <span messagesKey="searchingImagesLabel" id="searchingimages" class="localizedSpan">Searching images…</span>
+                            <div id="numimagesfound" style="display:none;">
+                                <button id="reloadImageDownloadBatch" class="iconButton" type="button" aria-label="Reload images" title="Reload images">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5"/></svg>
+                                </button>
+                                <div messagesKey="foundLabel">Found <span>%n</span> images</div>
+                            </div>
+                        </div>
+                        <button messagesKey="stopImageSearchLabel" id="stopImageSearch" class="downloadButton --small" style="display:none;" aria-label="Stop image search">Stop image search</button>
+                        <div id="downloadButton" class="download-button" role="button" tabindex="0" aria-label="Download menu" aria-haspopup="true" aria-expanded="false" aria-controls="downloadMenu">
+                            <div class="download-button__content">
+                                <div class="download-button__left-part">
+                                    <svg class="download-button__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M12 3v13"/>
+                                        <path d="M17 11l-5 5-5-5"/>
+                                        <path d="M21 16v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    </svg>
+                                    <label><!--will populate in popup.js--></label>
+                                </div>
+                                <div class="download-button__right-part">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M6 9l6 6 6-6"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div class="download-button__menu selectMenu" id="downloadMenu">
+                                <div class="input-group">
+                                    <div class="input-group__label">Subfolder Name:</div>
+                                    <div class="input-group__form">
+                                        <span class="showTooltipOnHover">
+                                            <input type="text" id="savefoldername" autocomplete="one-time-code" aria-label="Subfolder Name">
+                                            <div class="tooltip" role="tooltip">
+                                                <p>Specify the subfolder where to download images.</p>
+                                                <p>Enter <b>basedonurl</b> to create separate folders for each url.</p>
+                                                <p>Leave empty to download to default folder.</p>
+                                            </div>
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                    <div class="input-group__label">File name:</div>
+                                    <div class="input-group__form">
+                                        <select id="saveFileAs" data-value="SYSTEM_NAME" aria-label="File name options">
+                                            <option value="SYSTEM_NAME" selected>System name</option>
+                                            <option value="ORIGINAL_FILE_NAME">Original File Name</option>
+                                            <option value="CUSTOM_NAME">Custom Name</option>
+                                        </select>
+                                        <span class="showTooltipOnHover tip__custom-name --margin-top-14">
+                                            <input type="text" id="saveFileName" autocomplete="off" placeholder="e.g. vacation_photo…" aria-label="Custom File Name">
+                                            <div class="tooltip" role="tooltip">
+                                                <p>Choose a new name for the saved images. Can't be empty.</p>
+                                                <p messagesKey="filenameTokensHint" class="localizedSpan">Tokens: {name} {index} {index:3} {ext} {domain} {date} {time} {year} {month} {day} {timestamp}</p>
+                                            </div>
+                                        </span>
+                                        <span class="tip__system-name --margin-top-2">
+                                            System name is automatically generated: imgi_{number}_{name}.{format}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="input-group">
+                                  <div class="input-group__label">Convert</div>
+                                  <div class="input-group__form --flex-direction-row">
+                                    <select id="convertFrom" aria-label="Convert from image format">
+                                      <option value="">None</option>
+                                      <option value="ALL">All images</option>
+                                      <option value="WEBP">WEBP</option>
+                                      <option value="SVG">SVG</option>
+                                      <option value="PNG">PNG</option>
+                                      <option value="GIF">GIF</option>
+                                      <option value="JPG">JPG</option>
+                                      <option value="BMP">BMP</option>
+                                      <option value="ICO">ICO</option>
+                                      <option value="TIFF">TIFF</option>
+                                      <option value="AVIF">AVIF</option>
+                                    </select>
+                                    <span class="to-label">&nbsp;to&nbsp;</span>
+                                    <select id="convertTo" aria-label="Convert to image format">
+                                      <option value="jpeg">JPEG</option>
+                                      <option value="png">PNG</option>
+                                      <option value="webp">WEBP</option>
+                                    </select>
+                                  </div>
+                                </div>
+
+                                <div class="checkbox-group">
+                                    <input type="checkbox" name="downloadAsZip" id="downloadAsZip">
+                                    <label for="downloadAsZip">Download as <b>.ZIP</b></label>
+                                </div>
+                                <div class="button-group">
+                                  <button type="button" id="saveDownloadOptionsButton" class="downloadButton">Save download options</button>
+                              </div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="status-actions-cell">
+                        <button id="selectalla" type="button" messagesKey="selectall" class="iconButton" style="visibility:hidden;" aria-label="Select all images" aria-pressed="false" title="Select all">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                <path d="M9 12l2 2 4-4"/>
+                            </svg>
+                        </button>
+                        <button id="copyImageUrls" type="button" class="iconButton" aria-label="Copy image URLs" title="Copy image URLs (C to copy, E to export .txt)">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <rect x="9" y="9" width="13" height="13" rx="2"/>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                        </button>
+                        <div class="rightPrefsContainer">
+                            <button id="showPrefs" type="button" aria-label="Preferences">
+                                <span class="new" aria-hidden="true">new</span>
+                                <svg class="prefsIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></svg>
+                            </button>
+                            <button type="button" class="twoColsPref iconButton" aria-label="Toggle two-column layout" aria-pressed="false">
+                                <svg class="twoColsPref__icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <rect x="4" y="4" width="6" height="16" rx="2"/>
+                                    <rect x="14" y="4" width="6" height="16" rx="2"/>
+                                </svg>
+                            </button>
+                            <button type="button" class="captureSelection hiddenInPopup" aria-label="Capture selection">
+                                <svg class="darksvg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                    <path d="M15 9l-6 6M9 9h6v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <span class="hint" aria-hidden="true">
+                                    Capture your image!
+                                </span>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                <tr id="toolsDiv">
+                    <td colspan="2">
+                        <div class="filters" style="width:100%;position: relative;box-sizing: border-box;">
+                            <div id="sizeTab" tabindex="0" role="button" aria-haspopup="listbox" aria-label="Filter by size">
+                                <span class="menuLabel">Size</span><svg class="iconChevron" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                                <div class="selectMenu sizeMenu">
+                                    <div sizeconf="any" class="selected">Any</div>
+                                    <div sizeconf="small">Small</div>
+                                    <div sizeconf="medium">Medium</div>
+                                    <div sizeconf="large">Large</div>
+                                    <div sizeconf="custom">At least <input type="number" value="0" id="minwidthinput" class="filterInput noSelect" aria-label="Minimum width">&times;<input type="number" value="0" id="minheightinput" class="filterInput noSelect" aria-label="Minimum height"></div>
+                                    <div class="savesize" savesize="true">Save size selection</div>
+                                </div>
+                            </div>
+                            <div tabindex="0" role="button" aria-haspopup="listbox" aria-label="Filter by type">
+                                <span class="menuLabel">Type</span><svg class="iconChevron" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                                <div class="selectMenu typeMenu">
+                                    <div typeconf="any" class="selected">Any</div>
+                                    <div typeconf="JPG">JPG</div>
+                                    <div typeconf="GIF">GIF</div>
+                                    <div typeconf="PNG">PNG</div>
+                                    <div typeconf="BMP">BMP</div>
+                                    <div typeconf="SVG">SVG</div>
+                                    <div typeconf="WEBP">WEBP</div>
+                                    <div typeconf="ICO">ICO</div>
+                                    <div typeconf="TIFF">TIFF</div>
+                                    <div typeconf="AVIF">AVIF</div>
+                                </div>
+                            </div>
+                            <div tabindex="0" role="button" aria-haspopup="listbox" aria-label="Filter by layout">
+                                <span class="menuLabel">Layout</span><svg class="iconChevron" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                                <div class="selectMenu layoutMenu">
+                                    <div layoutconf="any" class="selected">Any</div>
+                                    <div layoutconf="square">Square</div>
+                                    <div layoutconf="wide">Wide</div>
+                                    <div layoutconf="tall">Tall</div>
+                                </div>
+                            </div>
+                            <div tabindex="0" role="button" aria-haspopup="listbox" aria-label="Filter by URL">
+                                <span class="menuLabel">URL</span><svg class="iconChevron" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                                <div class="selectMenu">
+                                    <div style="padding-left:10px;">
+                                        <input type="search" id="filterbyurlinput" autocomplete="off" inputmode="search" placeholder="Filter by URL or name…" class="filterInput noSelect" />
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="sortTab" tabindex="0" role="button" aria-haspopup="listbox" aria-label="Sort images" style="position: absolute;right: 1px;top: 12px;padding: 0px;margin-right: 0px;">
+                                <span class="menuLabel">
+                                    <svg class="iconFunnel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M4 4h16v2.17a3 3 0 0 1 -.76 2l-5.24 5.76v4a3 3 0 0 1 -.76 2l-2 2.17a3 3 0 0 1 -2.48 1h-.52a3 3 0 0 1 -2.48 -1l-2 -2.17a3 3 0 0 1 -.76 -2v-4l-5.24 -5.76a3 3 0 0 1 -.76 -2v-2.17z"/>
+                                    </svg>
+                                </span>
+                                <div class="selectMenu sortMenu">
+                                    <div sortconf="pixels" class="selected">Pixel Size</div>
+                                    <div sortconf="index">Position in Page (beta)</div>
+                                </div>
+                            </div>
+                            <div class="clearFilters" style="display:none;padding-right: 10px;margin-right: 0px;">
+                                <span class="menuLabel">Clear</span>
+                                <div class="selectMenu" style="display:none;"></div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+    </div>
+    <div id="imgsContainer">
+        <div id="spinner" class="spinner">
+            <span id="processedImages" style="position: absolute;top: -38px;left: 50%;transform:translateX(-50%);white-space:nowrap;">Loading...</span>
+            <div class="bounce1"></div>
+            <div class="bounce2"></div>
+            <div class="bounce3"></div>
+        </div>
+    </div>
+</div>
+<script type="text/javascript" src="external/jquery-3.7.1.min.js"></script>
+<script type="text/javascript" src="external/jquery-ui.min.js"></script>
+<script type="text/javascript" src="sanitize.js"></script>
+<script type="text/javascript" src="popup.js"></script>
+<script type="text/javascript" src="popup-bridge.js"></script>
+<div id="manyfiles" class="popupContainer" role="dialog" aria-modal="true" aria-labelledby="manyfilesnum">
+    <div class="popupEl">
+        <h2><span messagesKey="manyfilesnum" class="localizedSpan" id="manyfilesnum">Download %n images</span></h2>
+        <p id="chromemanyfileswarning">
+            <span messagesKey="makesurechrome" class="localizedSpan">Make sure you don't have selected the 'Ask where to save each file before downloading' checkbox in <a href="chrome://settings/downloads" target="_blank">Chrome Settings --> Advanced --> Download section.</a></span><br>
+            <br>
+            <span messagesKey="otherwisechrome" class="localizedSpan">Otherwise Chrome by design will popup the Save as... dialog for each file :-(</span>
+        </p>
+        <p id="firefoxmanyfileswarning" style="display:none;">
+            <span messagesKey="makesurefirefox" class="localizedSpan">Make sure you don't have selected the 'Always ask where to save files' checkbox in Firefox Settings --> Files and Applications section.</span><br>
+            <br>
+            <span messagesKey="otherwisefirefox" class="localizedSpan">Otherwise Firefox by design will popup the Save as... dialog for each file :-(</span>
+        </p>
+        <p>
+            <input type="checkbox" name="donotbotherme" id="donotbotherme" /> <label for="donotbotherme" messagesKey="donotshowdialogagain" class="localizedSpan">Do not show this dialog again</label>
+        </p>
+        <div style="float:left;position: relative;left:50%;transform: translateX(-50%);margin-top:12px;margin-bottom: 18px; font-size:16px;">
+            <div id="manyfilesdownload" class="downloadButton">
+                <svg class="downloadButton__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2"/><path d="M7 11l5 5l5 -5"/><path d="M12 4l0 12"/></svg>
+                <span messagesKey="download" class="localizedSpan">Download</span>
+            </div>
+            <div id="manyfilescancel" class="downloadButton cancelButton" style="padding-left:12px;margin-left:10px;">
+                <span messagesKey="cancel" class="localizedSpan">Cancel</span>
+            </div>
+        </div>
+    </div>
+</div>
+<div id="prefsDiv" class="popupContainer" role="dialog" aria-modal="true" aria-labelledby="prefsTitle">
+    <div class="popupEl">
+        <div class="popupEl__header">
+            <div class="popupEl__title localizedSpan" messagesKey="preferencesLabel" id="prefsTitle">Preferences</div>
+        </div>
+        <!-- GoGather promotional banner removed -->
+        <div class="displayInSidePanelPref pref-section">
+            <input type="checkbox" id="displayInSidePanel" /><label for="displayInSidePanel">Display in Side Panel</label>
+        </div>
+        <div class="hiddenInSidePanel pref-section">
+            <input type="checkbox" id="biggerview" /><label for="biggerview">Bigger layout</label>
+        </div>
+        <div class="pref-section">
+            <input type="checkbox" id="preferFullRes" /><label for="preferFullRes" messagesKey="preferFullResLabel" class="localizedSpan">Prefer full resolution (grab largest)</label>
+        </div>
+        <div style="display:none;" class="pref-section">
+            <input type="checkbox" id="twocols" /><label for="twocols">Display images in two columns<span class="hiddenInPopup">, if possible.</span></label>
+        </div>
+        <div class="pref-section pref-section--toggle">
+            <input type="checkbox" id="downloadseparatefolder" /><label for="downloadseparatefolder">Specify Download Options</label>
+            <div style="display:none;" class="pref-options" id="downloadocationcontainer">
+                <div class="prefsDownloadMenu" style="margin-left: 0px;">
+                    <div class="pref-options__row">
+                        <div class="pref-options__label">Subfolder Name:</div>
+                        <span class="showTooltipOnHover" style="flex: 1;">
+                            <input type="text" id="savefoldernamePrefs" autocomplete="one-time-code" style="width: 100%;">
+                            <div class="tooltip">
+                                <p>Specify the subfolder where to download images.</p>
+                                <p>Enter <b>basedonurl</b> to create separate folders for each url.</p>
+                                <p>Leave empty to download to default folder.</p>
+                            </div>
+                        </span>
+                    </div>
+                    <div class="input-group" style="margin-bottom: 10px;">
+                        <div class="input-group__label">File name:</div>
+                        <div class="input-group__form">
+                            <select id="saveFileAsPref" data-value="SYSTEM_NAME">
+                                <option value="SYSTEM_NAME" selected>System name</option>
+                                <option value="ORIGINAL_FILE_NAME">Original File Name</option>
+                                <option value="CUSTOM_NAME">Custom Name</option>
+                            </select>
+                            <span class="showTooltipOnHover tip__custom-name --margin-top-5">
+                                <input type="text" id="saveFileNamePref" autocomplete="off" placeholder="e.g. vacation_photo…">
+                                <div class="tooltip">
+                                    <p>Choose a new name for the saved images. Can't be empty.</p>
+                                </div>
+                            </span>
+                            <span class="tip__system-name --margin-top-2">
+                                System name is automatically generated: imgi_{number}_{name}.{format}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="convert-prefs pref-options__row">
+                        <div class="pref-options__label">Convert</div>
+                        <select id="convertFromPrefs">
+                            <option value="">None</option>
+                            <option value="ALL">All images</option>
+                            <option value="WEBP">WEBP</option>
+                            <option value="SVG">SVG</option>
+                            <option value="PNG">PNG</option>
+                            <option value="GIF">GIF</option>
+                            <option value="JPG">JPG</option>
+                            <option value="BMP">BMP</option>
+                            <option value="ICO">ICO</option>
+                            <option value="TIFF">TIFF</option>
+                            <option value="AVIF">AVIF</option>
+                        </select>
+                        <span class="to-label" style="color: var(--text-muted);">&nbsp;to&nbsp;</span>
+                        <select id="convertToPrefs">
+                            <option value="jpeg">JPEG</option>
+                            <option value="png">PNG</option>
+                            <option value="webp">WEBP</option>
+                        </select>
+                    </div>
+
+                    <span class="prefsTip">
+                        Make sure that "Ask where to save each file before downloading" is unchecked in Browser Settings
+                    </span>
+                </div>
+            </div>
+        </div>
+        <div class="pref-section">
+            <input type="checkbox" id="donotbother" /><label for="donotbother">Do not show many files warning.</label>
+        </div>
+        <div class="pref-section">
+            <input type="checkbox" id="allframes" /><label for="allframes">Search in all frames, including adv and social.</label>
+        </div>
+        <div class="pref-section pref-section--inline">
+            <span class="pref-section__static-label">Open with Hotkey:</span>
+            <a id="openHotKeyPrefs" href="#" class="hotkey-badge">⇧⌘Y</a>
+        </div>
+        <div class="popup-actions">
+            <a href="https://buymeacoffee.com/ritesh.rana" target="_blank" rel="noopener" id="donate" class="downloadButton popup-actions__btn popup-actions__btn--secondary">
+                <svg class="popup-actions__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+                Support
+            </a>
+            <div id="saveprefs" class="downloadButton popup-actions__btn">
+                <svg class="popup-actions__icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Save
+            </div>
+            <div id="saveprefscancel" class="downloadButton cancelButton popup-actions__btn popup-actions__btn--ghost">
+                Cancel
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Rating popup removed for cleaner UX -->
+<!-- GoGather promotional modal removed -->
+
+<!-- Footer -->
+<div id="extensionFooter">
+  <span>Image Download - Batch · by Ritesh Rana</span>
+  <a href="https://buymeacoffee.com/ritesh.rana" target="_blank" rel="noopener">Buy me a coffee</a>
+</div>
+
+<!-- Compatibility IDs expected by bundled popup.js -->
+<div style="display:none !important;" aria-hidden="true">
+  <a id="saveaslink" href="#"></a>
+  <button id="ratebutton" type="button"></button>
+  <button id="rateclose" type="button"></button>
+  <button id="goGatherDiv" type="button"></button>
+  <button id="goGatherTopClick" type="button"></button>
+</div>
+
+
+</body>
+</html>

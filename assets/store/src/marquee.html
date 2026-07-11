@@ -1,0 +1,56 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="/assets/store/src/brand.css">
+<style>
+  body{width:1400px;height:560px;}
+  .stage{width:1400px;height:560px;display:grid;grid-template-columns:1.05fr .95fr;align-items:center;}
+  .left{padding:0 0 0 96px;}
+  .kicker{font-size:14px;}
+  h1{font-size:96px;margin-top:20px;}
+  h1 .l2{display:block;}
+  .lead{color:var(--text-2);font-size:19px;font-weight:500;line-height:1.5;margin-top:26px;max-width:520px;}
+  .chips{display:flex;flex-wrap:wrap;gap:12px;margin-top:34px;max-width:560px;}
+  .chip{font-size:14px;}
+  .right{position:relative;height:560px;}
+  .mock{position:absolute;width:560px;top:70px;left:40px;transform:rotate(-2deg);}
+  .mock__title{font-size:22px;}
+  .grid{grid-template-columns:repeat(4,1fr);gap:14px;}
+  .btn{margin:4px 20px 22px;}
+  .foot{position:absolute;left:96px;bottom:44px;color:var(--muted);font-size:14px;letter-spacing:.04em;}
+</style></head>
+<body><div class="stage">
+  <div class="left">
+    <div class="kicker">Batch Image Downloader · 100% Local</div>
+    <h1 class="serif">Grab every<span class="l2">image<span class="accent-underline">.</span></span></h1>
+    <div class="lead">Discover images from tags, srcset, CSS, SVG &amp; lazy content. Filter, rename with tokens, upgrade to full resolution, and download as files or a ZIP.</div>
+    <div class="chips">
+      <span class="chip"><span class="dot"></span>Full-resolution upgrade</span>
+      <span class="chip"><span class="dot"></span>ZIP &amp; custom names</span>
+      <span class="chip"><span class="dot"></span>No tracking</span>
+    </div>
+  </div>
+  <div class="right">
+    <div class="mock">
+      <div class="mock__bar">
+        <div class="mock__title">Image <b>Download</b></div>
+        <div class="mock__count">48 images found</div>
+      </div>
+      <div class="mock__tools">
+        <span class="tool on">✓ Select all</span>
+        <span class="tool">Size</span>
+        <span class="tool">Type</span>
+        <span class="tool on">Full-res</span>
+      </div>
+      <div class="grid">
+        <div class="cell sel"><img src="/onboarding_1.jpg"><div class="tick">✓</div></div>
+        <div class="cell"><img src="/onboarding_2.jpg"></div>
+        <div class="cell sel"><img src="/onboarding_3.jpg"><div class="tick">✓</div></div>
+        <div class="cell"><img src="/onboarding_4.jpg"></div>
+        <div class="cell sel"><img src="/onboarding_3.jpg"><div class="tick">✓</div></div>
+        <div class="cell"><img src="/onboarding_1.jpg"></div>
+        <div class="cell sel"><img src="/onboarding_4.jpg"><div class="tick">✓</div></div>
+        <div class="cell"><img src="/onboarding_2.jpg"></div>
+      </div>
+      <div class="btn">Download 24 selected  ·  as ZIP</div>
+    </div>
+  </div>
+</div></body></html>

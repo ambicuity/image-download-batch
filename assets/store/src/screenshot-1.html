@@ -1,0 +1,56 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="/assets/store/src/brand.css">
+<style>
+  body{width:1280px;height:800px;}
+  .stage{width:1280px;height:800px;display:grid;grid-template-columns:1fr 640px;align-items:center;}
+  .left{padding:0 40px 0 90px;}
+  .kicker{font-size:13px;}
+  h1{font-size:66px;margin-top:18px;max-width:560px;}
+  .lead{color:var(--text-2);font-size:19px;font-weight:500;line-height:1.55;margin-top:24px;max-width:520px;}
+  .chips{display:flex;flex-wrap:wrap;gap:11px;margin-top:32px;max-width:540px;}
+  .chip{font-size:14px;}
+  .right{position:relative;height:800px;display:flex;align-items:center;}
+  .mock{width:600px;}
+  .mock__title{font-size:22px;}
+  .grid{gap:14px;}
+  .btn{margin:4px 20px 22px;}
+</style></head>
+<body><div class="stage">
+  <div class="left">
+    <div class="kicker">01 · Discover</div>
+    <h1 class="serif">Find every image, instantly<span class="accent-underline">.</span></h1>
+    <div class="lead">One click scans the page — then download what you want individually or as a single ZIP.</div>
+    <div class="chips">
+      <span class="chip"><span class="dot"></span>srcset &amp; &lt;picture&gt;</span>
+      <span class="chip"><span class="dot"></span>CSS backgrounds</span>
+      <span class="chip"><span class="dot"></span>lazy-loaded</span>
+      <span class="chip"><span class="dot"></span>SVG &amp; shadow DOM</span>
+      <span class="chip"><span class="dot"></span>og:image &amp; posters</span>
+    </div>
+  </div>
+  <div class="right">
+    <div class="mock">
+      <div class="mock__bar">
+        <div class="mock__title">Image <b>Download</b></div>
+        <div class="mock__count">48 images found</div>
+      </div>
+      <div class="mock__tools">
+        <span class="tool on">✓ Select all</span>
+        <span class="tool">Size</span>
+        <span class="tool">Type</span>
+        <span class="tool">Sort</span>
+      </div>
+      <div class="grid">
+        <div class="cell sel"><img src="/onboarding_1.jpg"><div class="tick">✓</div></div>
+        <div class="cell sel"><img src="/onboarding_2.jpg"><div class="tick">✓</div></div>
+        <div class="cell"><img src="/onboarding_3.jpg"></div>
+        <div class="cell sel"><img src="/onboarding_4.jpg"><div class="tick">✓</div></div>
+        <div class="cell"><img src="/onboarding_3.jpg"></div>
+        <div class="cell sel"><img src="/onboarding_1.jpg"><div class="tick">✓</div></div>
+        <div class="cell sel"><img src="/onboarding_4.jpg"><div class="tick">✓</div></div>
+        <div class="cell"><img src="/onboarding_2.jpg"></div>
+      </div>
+      <div class="btn">Download 24 selected  ·  as ZIP</div>
+    </div>
+  </div>
+</div></body></html>

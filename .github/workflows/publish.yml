@@ -1,0 +1,101 @@
+name: Publish to Chrome Web Store
+
+# Triggers:
+#  - push a version tag (v1.0.0, v1.1.0, ...) -> build, upload, publish
+#  - manual run (Actions tab) -> choose upload-only or upload+publish, and target
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish after upload?'
+        type: boolean
+        default: true
+      target:
+        description: 'Publish target'
+        type: choice
+        options: [default, trustedTesters]
+        default: default
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cws-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build extension ZIP
+        run: |
+          chmod +x scripts/build-zip.sh
+          scripts/build-zip.sh extension.zip
+
+      - name: Upload artifact (for inspection)
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: extension.zip
+
+      - name: Upload & publish to Chrome Web Store
+        env:
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          # tags always publish to default; manual runs use the chosen inputs
+          DO_PUBLISH: ${{ github.event_name == 'push' && 'true' || inputs.publish }}
+          TARGET: ${{ github.event_name == 'push' && 'default' || inputs.target }}
+        run: |
+          set -euo pipefail
+          for v in EXTENSION_ID CLIENT_ID CLIENT_SECRET REFRESH_TOKEN; do
+            if [ -z "${!v:-}" ]; then echo "::error::Missing secret CWS_$v"; exit 1; fi
+          done
+
+          echo "Requesting access token..."
+          ACCESS_TOKEN=$(curl -sf "https://oauth2.googleapis.com/token" \
+            -d "client_id=$CLIENT_ID" \
+            -d "client_secret=$CLIENT_SECRET" \
+            -d "refresh_token=$REFRESH_TOKEN" \
+            -d "grant_type=refresh_token" | jq -r .access_token)
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+            echo "::error::Failed to obtain access token (check CWS_CLIENT_* / CWS_REFRESH_TOKEN)"; exit 1
+          fi
+
+          echo "Uploading package to item $EXTENSION_ID ..."
+          UPLOAD=$(curl -sf -X PUT \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "x-goog-api-version: 2" \
+            -T extension.zip \
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/$EXTENSION_ID")
+          echo "Upload response: $UPLOAD"
+          STATE=$(echo "$UPLOAD" | jq -r '.uploadState // empty')
+          if [ "$STATE" != "SUCCESS" ]; then
+            echo "::error::Upload did not succeed (state=$STATE)"; echo "$UPLOAD" | jq .; exit 1
+          fi
+
+          if [ "$DO_PUBLISH" != "true" ]; then
+            echo "Upload complete. Skipping publish (upload-only run)."; exit 0
+          fi
+
+          echo "Publishing (target=$TARGET) ..."
+          PUB=$(curl -sf -X POST \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Length: 0" \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID/publish?publishTarget=$TARGET")
+          echo "Publish response: $PUB"
+          if echo "$PUB" | jq -e '.status | index("OK") // (index("ITEM_PENDING_REVIEW"))' >/dev/null 2>&1; then
+            echo "Submitted. It will go live after Chrome Web Store review."
+          else
+            echo "::warning::Publish returned an unexpected status; review the response above."
+          fi

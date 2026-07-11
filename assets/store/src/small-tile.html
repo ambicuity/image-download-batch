@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="/assets/store/src/brand.css">
+<style>
+  body{width:440px;height:280px;}
+  .stage{width:440px;height:280px;padding:30px 32px;display:flex;flex-direction:column;justify-content:space-between;}
+  .kicker{font-size:10px;letter-spacing:.34em;}
+  h1{font-size:52px;margin-top:10px;}
+  h1 .l2{display:block;font-size:52px;}
+  .tag{color:var(--text-2);font-size:12.5px;font-weight:500;margin-top:12px;letter-spacing:.01em;}
+  .strip{display:flex;gap:8px;margin-top:6px;}
+  .thumb{width:56px;height:40px;border-radius:8px;overflow:hidden;border:1px solid var(--line-2);}
+  .thumb.sel{border-color:var(--accent);box-shadow:0 0 0 1.5px var(--accent);}
+  .thumb img{width:100%;height:100%;object-fit:cover;}
+  .glow{position:absolute;right:-60px;top:-60px;width:220px;height:220px;border-radius:50%;
+    background:radial-gradient(circle,var(--accent-glow),transparent 70%);filter:blur(6px);}
+</style></head>
+<body><div class="stage">
+  <div class="glow"></div>
+  <div>
+    <div class="kicker">Batch Image Saver</div>
+    <h1 class="serif">Image<span class="l2">Download<span class="accent-underline">.</span></span></h1>
+  </div>
+  <div>
+    <div class="strip">
+      <div class="thumb"><img src="/onboarding_1.jpg"></div>
+      <div class="thumb sel"><img src="/onboarding_2.jpg"></div>
+      <div class="thumb"><img src="/onboarding_3.jpg"></div>
+      <div class="thumb sel"><img src="/onboarding_4.jpg"></div>
+    </div>
+    <div class="tag">Every image on any page — filtered, full-res, one click.</div>
+  </div>
+</div></body></html>
