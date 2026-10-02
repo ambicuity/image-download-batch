@@ -1,6 +1,6 @@
 # Privacy Policy — Image Download - Batch
 
-_Last updated: 2026-07-11_
+_Last updated: 2026-10-02_
 
 **Image Download - Batch** ("the extension") is designed to work entirely on
 your own device. Your privacy is simple because the extension collects nothing.
@@ -29,8 +29,9 @@ download images for you. They are never sent to us or any third party.
 ## Permissions
 
 The extension requests only the permissions needed to find and download images
-on the page you are viewing (host access, downloads, scripting, storage, side
-panel, context menu, and request-header handling for referrer-protected images).
+on the page you are viewing (host access, active tab, downloads, scripting,
+storage, side panel, and context menu). The active-tab permission is used only
+when you choose area capture, to screenshot the visible tab so you can crop it.
 All processing is local.
 
 ## Third-party services
