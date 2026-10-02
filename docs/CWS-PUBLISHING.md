@@ -59,6 +59,19 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 | `CWS_CLIENT_SECRET` | OAuth client secret |
 | `CWS_REFRESH_TOKEN` | refresh token from step 3 |
 
+### Alternative: service account (recommended)
+Instead of steps 2–3 and the three OAuth secrets:
+1. In the Google Cloud project, enable **Chrome Web Store API** and create a
+   service account with a JSON key.
+2. In the Chrome Web Store Developer Dashboard → **Account**, add the service
+   account's email (one service account per publisher).
+3. Add the whole JSON key as the repository secret `CWS_SERVICE_ACCOUNT_JSON`
+   (`gh secret set CWS_SERVICE_ACCOUNT_JSON < key.json`). Never commit the key.
+4. Optional: set `CWS_PUBLISHER_ID` (Dashboard → Publisher → Settings) to use
+   the v2 API; without it the workflow uses v1.1.
+
+The workflow prefers the service account when its secret is present.
+
 ## Publishing a new version
 
 1. **Bump the version** in `manifest.json` — CWS rejects an upload whose version
@@ -69,7 +82,8 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
    git tag v1.0.1
    git push origin master v1.0.1
    ```
-3. The workflow builds, uploads, and publishes. Watch it in the **Actions** tab;
+3. The workflow runs the tests, builds the ZIP, creates a GitHub Release with
+   the ZIP and `docs/releases/<tag>.md` notes, then uploads and publishes. Watch it in the **Actions** tab;
    the built ZIP is also saved as a run artifact.
 
 Or run it manually: **Actions → Publish to Chrome Web Store → Run workflow**

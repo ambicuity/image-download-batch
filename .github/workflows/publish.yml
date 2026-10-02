@@ -1,8 +1,13 @@
-name: Publish to Chrome Web Store
+name: Release
 
 # Triggers:
-#  - push a version tag (v1.0.0, v1.1.0, ...) -> build, upload, publish
-#  - manual run (Actions tab) -> choose upload-only or upload+publish, and target
+#  - push a version tag (v1.0.1, v1.1.0, ...) -> test, build, GitHub Release, Chrome Web Store upload + publish
+#  - manual run (Actions tab) -> test, build, Chrome Web Store upload (optionally publish)
+#
+# Chrome Web Store authentication (first match wins):
+#  1. CWS_SERVICE_ACCOUNT_JSON  service-account key added under Account in the CWS Developer Dashboard
+#  2. CWS_CLIENT_ID + CWS_CLIENT_SECRET + CWS_REFRESH_TOKEN  OAuth refresh-token flow
+# API: v2 when CWS_PUBLISHER_ID is set, otherwise v1.1. CWS_EXTENSION_ID is always required.
 on:
   push:
     tags: ['v*']
@@ -13,7 +18,7 @@ on:
         type: boolean
         default: true
       target:
-        description: 'Publish target'
+        description: 'Publish target (v1.1 API only)'
         type: choice
         options: [default, trustedTesters]
         default: default
@@ -22,33 +27,95 @@ permissions:
   contents: read
 
 concurrency:
-  group: cws-publish
+  group: release
   cancel-in-progress: false
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+
+      - name: Read manifest version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match manifest version $VERSION"; exit 1
+          fi
+
+      - name: Run tests
+        run: |
+          node --test docs/superpowers/tests/bug-regressions.test.cjs
+          for t in dedupeUrls filenameTokens flattenDedupeImages upgradeToLargest; do
+            node "docs/superpowers/tests/$t.test.cjs"
+          done
 
       - name: Build extension ZIP
         run: |
           chmod +x scripts/build-zip.sh
-          scripts/build-zip.sh extension.zip
+          scripts/build-zip.sh "image-download-batch-v${{ steps.version.outputs.version }}.zip"
 
-      - name: Upload artifact (for inspection)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: extension-zip
-          path: extension.zip
+          path: image-download-batch-v${{ steps.version.outputs.version }}.zip
 
-      - name: Upload & publish to Chrome Web Store
+  github-release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-zip
+
+      - name: Create GitHub Release
         env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          NOTES="docs/releases/${TAG}.md"
+          if [ -f "$NOTES" ]; then NOTES_ARGS=(--notes-file "$NOTES"); else NOTES_ARGS=(--generate-notes); fi
+          gh release create "$TAG" image-download-batch-*.zip --title "Image Download - Batch ${TAG}" "${NOTES_ARGS[@]}" --verify-tag
+
+  chrome-web-store:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      SERVICE_ACCOUNT_JSON: ${{ secrets.CWS_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-zip
+
+      - name: Authenticate with service account
+        id: sa
+        if: env.SERVICE_ACCOUNT_JSON != ''
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.CWS_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Upload & publish
+        env:
+          SA_TOKEN: ${{ steps.sa.outputs.access_token }}
           EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
           CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
@@ -57,45 +124,65 @@ jobs:
           TARGET: ${{ github.event_name == 'push' && 'default' || inputs.target }}
         run: |
           set -euo pipefail
-          for v in EXTENSION_ID CLIENT_ID CLIENT_SECRET REFRESH_TOKEN; do
-            if [ -z "${!v:-}" ]; then echo "::error::Missing secret CWS_$v"; exit 1; fi
-          done
+          ZIP=$(ls image-download-batch-*.zip)
+          [ -n "${EXTENSION_ID:-}" ] || { echo "::error::Missing secret CWS_EXTENSION_ID"; exit 1; }
 
-          echo "Requesting access token..."
-          ACCESS_TOKEN=$(curl -sf "https://oauth2.googleapis.com/token" \
-            -d "client_id=$CLIENT_ID" \
-            -d "client_secret=$CLIENT_SECRET" \
-            -d "refresh_token=$REFRESH_TOKEN" \
-            -d "grant_type=refresh_token" | jq -r .access_token)
-          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
-            echo "::error::Failed to obtain access token (check CWS_CLIENT_* / CWS_REFRESH_TOKEN)"; exit 1
-          fi
-
-          echo "Uploading package to item $EXTENSION_ID ..."
-          UPLOAD=$(curl -sf -X PUT \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "x-goog-api-version: 2" \
-            -T extension.zip \
-            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/$EXTENSION_ID")
-          echo "Upload response: $UPLOAD"
-          STATE=$(echo "$UPLOAD" | jq -r '.uploadState // empty')
-          if [ "$STATE" != "SUCCESS" ]; then
-            echo "::error::Upload did not succeed (state=$STATE)"; echo "$UPLOAD" | jq .; exit 1
-          fi
-
-          if [ "$DO_PUBLISH" != "true" ]; then
-            echo "Upload complete. Skipping publish (upload-only run)."; exit 0
-          fi
-
-          echo "Publishing (target=$TARGET) ..."
-          PUB=$(curl -sf -X POST \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "x-goog-api-version: 2" \
-            -H "Content-Length: 0" \
-            "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID/publish?publishTarget=$TARGET")
-          echo "Publish response: $PUB"
-          if echo "$PUB" | jq -e '.status | index("OK") // (index("ITEM_PENDING_REVIEW"))' >/dev/null 2>&1; then
-            echo "Submitted. It will go live after Chrome Web Store review."
+          if [ -n "${SA_TOKEN:-}" ]; then
+            echo "Authenticated with service account."
+            ACCESS_TOKEN="$SA_TOKEN"
           else
-            echo "::warning::Publish returned an unexpected status; review the response above."
+            for v in CLIENT_ID CLIENT_SECRET REFRESH_TOKEN; do
+              if [ -z "${!v:-}" ]; then echo "::error::Set CWS_SERVICE_ACCOUNT_JSON, or CWS_$v for the OAuth flow"; exit 1; fi
+            done
+            ACCESS_TOKEN=$(curl -sS "https://oauth2.googleapis.com/token" \
+              -d "client_id=$CLIENT_ID" -d "client_secret=$CLIENT_SECRET" \
+              -d "refresh_token=$REFRESH_TOKEN" -d "grant_type=refresh_token" | jq -r '.access_token // empty')
+            [ -n "$ACCESS_TOKEN" ] || { echo "::error::Failed to obtain OAuth access token"; exit 1; }
           fi
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          # call METHOD URL [curl args...] -> prints body; fails on HTTP >= 400
+          call() {
+            local method=$1 url=$2; shift 2
+            local out code
+            out=$(mktemp)
+            code=$(curl -sS -o "$out" -w '%{http_code}' -X "$method" -H "Authorization: Bearer $ACCESS_TOKEN" "$@" "$url")
+            if [ "$code" -ge 400 ]; then
+              cat "$out" >&2; echo "::error::$method $url returned HTTP $code" >&2; return 1
+            fi
+            cat "$out"; echo
+          }
+
+          if [ -n "${PUBLISHER_ID:-}" ]; then
+            ITEM="publishers/$PUBLISHER_ID/items/$EXTENSION_ID"
+            echo "Uploading $ZIP (API v2)..."
+            UPLOAD=$(call POST "https://chromewebstore.googleapis.com/upload/v2/$ITEM:upload" \
+              -H "Content-Type: application/zip" --data-binary "@$ZIP")
+            echo "$UPLOAD"
+            STATE=$(echo "$UPLOAD" | jq -r '.uploadState // empty')
+            for _ in $(seq 1 30); do
+              [ "$STATE" = "IN_PROGRESS" ] || break
+              sleep 10
+              STATE=$(call GET "https://chromewebstore.googleapis.com/v2/$ITEM:fetchStatus" | jq -r '.lastAsyncUploadState // empty')
+            done
+            [ "$STATE" = "SUCCEEDED" ] || { echo "::error::Upload state: ${STATE:-unknown}"; exit 1; }
+            [ "$DO_PUBLISH" = "true" ] || { echo "Upload complete; publish skipped."; exit 0; }
+            echo "Publishing (API v2)..."
+            call POST "https://chromewebstore.googleapis.com/v2/$ITEM:publish" \
+              -H "Content-Type: application/json" -d '{"publishType":"DEFAULT_PUBLISH"}'
+          else
+            echo "Uploading $ZIP (API v1.1)..."
+            UPLOAD=$(call PUT "https://www.googleapis.com/upload/chromewebstore/v1.1/items/$EXTENSION_ID" \
+              -H "x-goog-api-version: 2" -T "$ZIP")
+            echo "$UPLOAD"
+            STATE=$(echo "$UPLOAD" | jq -r '.uploadState // empty')
+            [ "$STATE" = "SUCCESS" ] || { echo "::error::Upload state: ${STATE:-unknown}"; exit 1; }
+            [ "$DO_PUBLISH" = "true" ] || { echo "Upload complete; publish skipped."; exit 0; }
+            echo "Publishing (API v1.1, target=$TARGET)..."
+            PUB=$(call POST "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID/publish?publishTarget=$TARGET" \
+              -H "x-goog-api-version: 2" -H "Content-Length: 0")
+            echo "$PUB"
+            echo "$PUB" | jq -e '(.status // []) | map(select(. == "OK" or . == "ITEM_PENDING_REVIEW")) | length > 0' >/dev/null \
+              || { echo "::error::Publish was not accepted"; exit 1; }
+          fi
+          echo "Submitted for Chrome Web Store review."
