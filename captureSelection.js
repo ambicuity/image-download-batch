@@ -200,20 +200,21 @@
       scrollX: window.scrollX,
       scrollY: window.scrollY,
       devicePixelRatio: window.devicePixelRatio,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
     };
 
-    // Send rectangle back to the extension; the popup handles the actual
-    // captureVisibleTab + crop.
-    try {
-      chrome.runtime.sendMessage({
-        type: 'returnSelection',
-        rect: rect,
-      });
-    } catch (err) {
-      // Extension context may be invalidated — tear down either way.
-    }
-
+    // Remove the dimming UI and let the page paint before taking its screenshot.
     teardown();
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        try {
+          chrome.runtime.sendMessage({ type: 'returnSelection', rect: rect }, function () {
+            void chrome.runtime.lastError;
+          });
+        } catch (err) { /* extension context was invalidated */ }
+      });
+    });
   }
 
   // ---------------------------------------------------------------------------

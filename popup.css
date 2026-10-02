@@ -1629,10 +1629,10 @@
         width: 100% !important;
       }
 
-      #saveFileAs:not([data-value="SYSTEM_NAME"]) ~ .tip__system-name,
-      #saveFileAsPref:not([data-value="SYSTEM_NAME"]) ~ .tip__system-name,
-      #saveFileAs:not([data-value="CUSTOM_NAME"]) ~ .tip__custom-name,
-      #saveFileAsPref:not([data-value="CUSTOM_NAME"]) + .tip__custom-name {
+      #saveFileAs:not(:has(option:checked[value="SYSTEM_NAME"])) ~ .tip__system-name,
+      #saveFileAsPref:not(:has(option:checked[value="SYSTEM_NAME"])) ~ .tip__system-name,
+      #saveFileAs:not(:has(option:checked[value="CUSTOM_NAME"])) ~ .tip__custom-name,
+      #saveFileAsPref:not(:has(option:checked[value="CUSTOM_NAME"])) + .tip__custom-name {
         display: none;
       }
       .tip__system-name {

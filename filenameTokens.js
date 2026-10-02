@@ -57,7 +57,7 @@
     // Zero-padded index first: {index:N} -> index left-padded with zeros to width N.
     var resolved = tpl.replace(/\{index:(\d+)\}/g, function (_m, width) {
       var s = indexStr;
-      var w = parseInt(width, 10);
+      var w = Math.min(100, parseInt(width, 10));
       while (s.length < w) s = '0' + s;
       return s;
     });

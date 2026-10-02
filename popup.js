@@ -31,6 +31,9 @@
   /** Threshold above which the "many files" warning dialog is shown. */
   var MANY_FILES_THRESHOLD = 30;
 
+  /** Parallel fetch/convert limit for ZIP entries; queued work must not eat its timeout. */
+  var ZIP_CONCURRENCY = 6;
+
   /** Storage key prefix used by every preference. */
   var PREF_PREFIX = 'imgdl_';
 
@@ -48,6 +51,7 @@
     CONVERT_TO: PREF_PREFIX + 'convertto',
     DOWNLOAD_AS_ZIP: PREF_PREFIX + 'downloadAsZip',
     SORT: PREF_PREFIX + 'sort',
+    DOWNLOAD_OPTIONS_ENABLED: PREF_PREFIX + 'downloadOptionsEnabled',
     SIZE_TYPE: PREF_PREFIX + 'sizetype',
     MIN_WIDTH: PREF_PREFIX + 'minwidth',
     MIN_HEIGHT: PREF_PREFIX + 'minheight'
@@ -63,8 +67,10 @@
   var state = {
     tabId: -1,
     tabUrl: '',
+    tabWindowId: null,
+    isSidePanel: new URLSearchParams(window.location.search).get('view') === 'sidePanel',
+    scrapeId: 0,
     allImages: [],
-    stopRequested: false,
     isScraping: false,
     port: null,
     filters: {
@@ -91,7 +97,9 @@
     _prefDoNotBother: false,
     _prefAllFrames: false,
     // Callback storage for the many-files dialog.
-    _pendingDownload: null
+    _pendingDownload: null,
+    selectedUrls: new Set(),
+    capturePending: false
   };
 
   // ---------------------------------------------------------------------------
@@ -113,8 +121,12 @@
   /** Hide an element via display:none. */
   function hide(el) { if (el) el.style.display = 'none'; }
 
-  /** Show an element (resets display to empty string). */
-  function show(el) { if (el) el.style.display = ''; }
+  /** Restore the stylesheet layout; override display:none for menus and dialogs. */
+  function show(el) {
+    if (!el) return;
+    el.style.display = '';
+    if (getComputedStyle(el).display === 'none') el.style.display = 'block';
+  }
 
   /** Toggle a CSS class. */
   function toggleClass(el, cls, on) {
@@ -177,6 +189,8 @@
    * preferences, connects the port, localises, and kicks off scraping.
    */
   function init() {
+    document.body.classList.toggle('sidePanel', state.isSidePanel);
+    document.body.classList.toggle('popup', !state.isSidePanel);
     hide(byId('bootLoading'));
 
     localizeDocument();
@@ -191,6 +205,7 @@
         }
         state.tabId = tab.id;
         state.tabUrl = tab.url || '';
+        state.tabWindowId = tab.windowId;
         connectPort();
         startScraping();
       });
@@ -199,6 +214,7 @@
     wireUI();
     wireFilters();
     wireDownloadMenu();
+    wireFilterMenus();
     wirePreferences();
     wireSelectAll();
     wireReloadAndStop();
@@ -206,6 +222,7 @@
     wireCaptureSelection();
     wireManyFilesDialog();
     listenForReturnSelection();
+    listenForTabChanges();
   }
 
   /** Connect to background via chrome.runtime.connect. */
@@ -241,8 +258,8 @@
    */
   function startScraping() {
     if (state.isScraping) return;
+    var scrapeId = ++state.scrapeId;
     state.isScraping = true;
-    state.stopRequested = false;
 
     show(byId('searchingimages'));
     hide(byId('numimagesfound'));
@@ -255,12 +272,9 @@
     chrome.scripting.executeScript(
       { target: target, files: ['imageScraper.js'] },
       function (results) {
+        if (scrapeId !== state.scrapeId) { void chrome.runtime.lastError; return; }
         if (chrome.runtime.lastError) {
           showScrapeError(chrome.runtime.lastError.message || 'Scraping failed');
-          finishScraping([]);
-          return;
-        }
-        if (state.stopRequested) {
           finishScraping([]);
           return;
         }
@@ -301,11 +315,15 @@
     hide(byId('spinner'));
     hide(byId('searchingimages'));
 
+    state.selectedUrls.clear();
     state.allImages = urls.map(function (url, idx) {
       return { url: url, index: idx, w: 0, h: 0, loaded: false };
     });
 
     renderImages();
+    state.allImages.forEach(function (img) {
+      if (!img.loaded && !img.probing) probeImageDimensions(img, null);
+    });
     showFoundCount(urls.length);
   }
 
@@ -319,6 +337,11 @@
       var msg = chrome.i18n.getMessage('foundLabel') || 'Found %n images';
       label.innerHTML = msg.replace('%n', '<span>' + n + '</span>');
     }
+    var downloadButton = byId('downloadButton');
+    toggleClass(downloadButton, '--show', n > 0);
+    var downloadLabel = downloadButton && qs('label', downloadButton);
+    if (downloadLabel) downloadLabel.textContent = chrome.i18n.getMessage('download') || 'Download';
+
     // Reveal the select-all button once images are present.
     var sa = byId('selectalla');
     if (sa && n > 0) sa.style.visibility = 'visible';
@@ -326,8 +349,7 @@
 
   /** Show an error in place of the spinner. */
   function showScrapeError(msg) {
-    var sp = byId('spinner');
-    if (sp) sp.textContent = msg || 'Error';
+    showDownloadError(msg || 'Scraping failed.');
   }
 
   // ---------------------------------------------------------------------------
@@ -354,6 +376,7 @@
     });
 
     updateSelectAllState();
+    sendSelectedImagesToTab();
   }
 
   /**
@@ -372,27 +395,38 @@
     thumb.className = 'imgThumb';
     thumb.alt = '';
     thumb.loading = 'lazy';
-    thumb.onerror = function () {
+    function markThumbFailed() {
       thumb.classList.add('imgThumb--error');
       thumb.removeAttribute('src');
       thumb.setAttribute('data-error', '1');
+    }
+    thumb.onerror = function () {
+      img.failed = true;
+      markThumbFailed();
     };
     thumb.onload = function () {
+      var changed = !img.loaded || img.w !== thumb.naturalWidth || img.h !== thumb.naturalHeight;
       img.loaded = true;
       img.w = thumb.naturalWidth || 0;
       img.h = thumb.naturalHeight || 0;
       updateCardMeta(card, img);
+      if (changed) refreshDimensionFilters();
     };
-    thumb.src = img.url;
+    // Known-broken URLs are not re-requested each time the grid re-renders.
+    if (img.failed) markThumbFailed(); else thumb.src = img.url;
     card.appendChild(thumb);
 
     // Selection checkbox.
     var cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = 'imgCheckbox';
+    cb.checked = state.selectedUrls.has(img.url);
+    toggleClass(card, 'imgSelected', cb.checked);
     cb.setAttribute('aria-label', 'Select image');
     cb.addEventListener('click', function (e) { e.stopPropagation(); });
     cb.addEventListener('change', function () {
+      if (cb.checked) state.selectedUrls.add(img.url);
+      else state.selectedUrls.delete(img.url);
       toggleClass(card, 'imgSelected', cb.checked);
       updateSelectAllState();
       sendSelectedImagesToTab();
@@ -427,6 +461,8 @@
     card.addEventListener('click', function (e) {
       if (e.target === cb || e.target.closest('.imgActions')) return;
       cb.checked = !cb.checked;
+      if (cb.checked) state.selectedUrls.add(img.url);
+      else state.selectedUrls.delete(img.url);
       toggleClass(card, 'imgSelected', cb.checked);
       updateSelectAllState();
       sendSelectedImagesToTab();
@@ -453,20 +489,26 @@
    * Used as a fallback when the thumbnail <img> hasn't loaded yet.
    */
   function probeImageDimensions(img, card) {
-    if (img.loaded) return;
+    if (img.loaded || img.probing || img.failed) return;
+    img.probing = true;
     var probe = new Image();
     probe.onload = function () {
       img.loaded = true;
       img.w = probe.naturalWidth || 0;
       img.h = probe.naturalHeight || 0;
       updateCardMeta(card, img);
+      refreshDimensionFilters();
     };
-    probe.onerror = function () { /* leave dimensions at 0 */ };
+    probe.onerror = function () { img.probing = false; img.failed = true; };
     probe.src = img.url;
   }
 
+  // Re-render once per burst of dimension discoveries so size/layout and pixel sort settle.
+  var refreshDimensionFilters = debounce(function () { renderImages(); }, 50);
+
   /** Update the meta (dimensions / type) text inside a card. */
   function updateCardMeta(card, img) {
+    if (!card) return;
     var meta = qs('.imgMeta', card);
     if (!meta) return;
     var ext = getExtensionFromUrl(img.url);
@@ -478,17 +520,19 @@
   function getExtensionFromUrl(url) {
     if (!url) return '';
     if (url.indexOf('data:') === 0) {
-      var m = url.match(/^data:image\/([a-z0-9.+-]+);/i);
+      var m = url.match(/^data:image\/([a-z0-9.+-]+)(?:;|,)/i);
       if (m) return m[1].split('+')[0].toUpperCase();
       return 'DATA';
     }
     try {
-      var path = new URL(url).pathname;
-      var dot = path.lastIndexOf('.');
+      // Only the last path segment carries an extension ("/v1.2/photo" has none).
+      var name = tryFilename(url);
+      var dot = name.lastIndexOf('.');
       if (dot === -1) return '';
-      var ext = path.slice(dot + 1).toUpperCase();
-      // Normalise JPEG -> JPG for display consistency.
-      return ext === 'JPEG' ? 'JPG' : ext;
+      var ext = name.slice(dot + 1).toUpperCase();
+      // Normalise aliases so type filters and conversion match: JPEG -> JPG, TIF -> TIFF.
+      if (ext === 'JPEG') return 'JPG';
+      return ext === 'TIF' ? 'TIFF' : ext;
     } catch (e) {
       return '';
     }
@@ -607,6 +651,21 @@
       }
     }
 
+    ['minwidthinput', 'minheightinput'].forEach(function (id) {
+      var input = byId(id);
+      if (!input) return;
+      input.addEventListener('input', function () {
+        state.filters.size = 'custom';
+        state.filters.minWidth = Math.max(0, intOrZero(byId('minwidthinput').value));
+        state.filters.minHeight = Math.max(0, intOrZero(byId('minheightinput').value));
+        qsa('[sizeconf]').forEach(function (item) {
+          item.classList.toggle('selected', item.getAttribute('sizeconf') === 'custom');
+        });
+        renderImages();
+        showClearFilters();
+      });
+    });
+
     // Type dropdown.
     wireDropdownMenu('Filter by type', 'typeconf', 'type');
 
@@ -701,6 +760,8 @@
     });
     var urlInput = byId('filterbyurlinput');
     if (urlInput) urlInput.value = '';
+    var mw = byId('minwidthinput'); if (mw) mw.value = 0;
+    var mh = byId('minheightinput'); if (mh) mh.value = 0;
     renderImages();
     showClearFilters();
   }
@@ -725,6 +786,9 @@
       return !c.classList.contains('imgSelected');
     });
     cards.forEach(function (c) {
+      var url = c.getAttribute('imgsrc');
+      if (anyUnselected) state.selectedUrls.add(url);
+      else state.selectedUrls.delete(url);
       toggleClass(c, 'imgSelected', anyUnselected);
       var cb = qs('.imgCheckbox', c);
       if (cb) cb.checked = anyUnselected;
@@ -778,13 +842,14 @@
     var btn = byId('downloadButton');
     var menu = byId('downloadMenu');
     if (btn && menu) {
-      btn.addEventListener('click', function () {
+      btn.addEventListener('click', function (event) {
+        if (menu.contains(event.target)) return;
         var open = menu.style.display === 'block';
         if (open) { hide(menu); btn.setAttribute('aria-expanded', 'false'); }
         else { show(menu); btn.setAttribute('aria-expanded', 'true'); }
       });
       btn.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); btn.click(); }
+        if (e.target === btn && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); btn.click(); }
       });
     }
 
@@ -825,6 +890,8 @@
     obj[STORAGE_KEYS.CONVERT_FROM] = o.convertFrom;
     obj[STORAGE_KEYS.CONVERT_TO] = o.convertTo;
     obj[STORAGE_KEYS.DOWNLOAD_AS_ZIP] = o.downloadAsZip;
+    obj[STORAGE_KEYS.DOWNLOAD_OPTIONS_ENABLED] = !!(o.saveFolderName || o.saveFileName || o.convertFrom || o.saveFileAs !== 'SYSTEM_NAME');
+    setChecked('downloadseparatefolder', obj[STORAGE_KEYS.DOWNLOAD_OPTIONS_ENABLED]);
     try { chrome.storage.local.set(obj); } catch (e) {}
   }
 
@@ -884,17 +951,18 @@
       return;
     }
 
-    var convFrom = state.downloadOptions.convertFrom;
-    var convTo = state.downloadOptions.convertTo;
+    var options = Object.assign({}, state.downloadOptions);
+    var convFrom = options.convertFrom;
+    var convTo = options.convertTo;
 
     urls.forEach(function (url, idx) {
       if (shouldConvert(url, convFrom, convTo)) {
         convertImage(url, convTo, function (dataUrl) {
-          if (dataUrl) downloadDataUrl(dataUrl, url, idx);
-          else downloadSingleImage(url);
+          if (dataUrl) downloadDataUrl(dataUrl, url, idx, options);
+          else downloadSingleImage(url, idx, options);
         });
       } else {
-        downloadSingleImage(url, idx);
+        downloadSingleImage(url, idx, options);
       }
     });
   }
@@ -909,16 +977,35 @@
   }
 
   /** Download a single image URL via chrome.downloads. */
-  function downloadSingleImage(url, index) {
-    try {
-      chrome.downloads.download({
-        url: url,
-        conflictAction: 'uniquify'
-      });
-    } catch (e) {
-      // Fallback: open in new tab so the user can save manually.
-      window.open(url, '_blank');
+  function downloadSingleImage(url, index, options) {
+    requestImageDownload(url, url, index, options);
+  }
+
+  function requestImageDownload(url, sourceUrl, index, options) {
+    chrome.runtime.sendMessage({
+      msg: 'downloadImage', url: url, sourceUrl: sourceUrl, index: (index || 0) + 1,
+      downloadOptions: Object.assign({}, options || state.downloadOptions)
+    }, function (response) {
+      var error = chrome.runtime.lastError;
+      if (error || !response || !response.success) {
+        showDownloadError(error ? error.message : (response && response.error) || 'Download failed');
+      }
+    });
+  }
+
+  function showDownloadError(message) {
+    var container = byId('toastContainer');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toastContainer';
+      document.body.appendChild(container);
     }
+    var toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.setAttribute('role', 'alert');
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(function () { toast.remove(); }, 4000);
   }
 
   /**
@@ -926,6 +1013,12 @@
    * data: URL (or null on failure).
    */
   function convertImage(url, targetFormat, cb) {
+    var done = false;
+    var timeout = setTimeout(function () { finish(null); }, 30000);
+    function finish(result) {
+      if (done) return;
+      done = true; clearTimeout(timeout); cb(result);
+    }
     var img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = function () {
@@ -934,34 +1027,27 @@
         canvas.width = img.naturalWidth || img.width;
         canvas.height = img.naturalHeight || img.height;
         var ctx = canvas.getContext('2d');
+        // JPEG has no alpha channel: transparent pixels would otherwise turn black.
+        if (targetFormat === 'jpeg') {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
         ctx.drawImage(img, 0, 0);
         var mime = 'image/' + targetFormat;
         var dataUrl = canvas.toDataURL(mime, 0.92);
-        cb(dataUrl);
+        finish(dataUrl.indexOf('data:' + mime + ';') === 0 ? dataUrl : null);
       } catch (e) {
         // Canvas tainted (CORS) — fall back to raw download.
-        cb(null);
+        finish(null);
       }
     };
-    img.onerror = function () { cb(null); };
+    img.onerror = function () { finish(null); };
     img.src = url;
   }
 
-  /** Download a data: URL via a Blob. */
-  function downloadDataUrl(dataUrl, originalUrl, index) {
-    try {
-      var blob = dataUrlToBlob(dataUrl);
-      if (!blob) { downloadSingleImage(originalUrl, index); return; }
-      var objUrl = URL.createObjectURL(blob);
-      chrome.downloads.download({
-        url: objUrl,
-        conflictAction: 'uniquify'
-      }, function () {
-        setTimeout(function () { URL.revokeObjectURL(objUrl); }, 5000);
-      });
-    } catch (e) {
-      downloadSingleImage(originalUrl, index);
-    }
+  /** Download converted data directly so the worker retains its source and index. */
+  function downloadDataUrl(dataUrl, originalUrl, index, options) {
+    requestImageDownload(dataUrl, originalUrl, index, options);
   }
 
   /** Convert a data: URL to a Blob. */
@@ -977,7 +1063,7 @@
       if (isBase64) {
         bytes = atob(raw);
       } else {
-        bytes = unescape(encodeURIComponent(raw));
+        bytes = unescape(encodeURIComponent(raw).replace(/%25/g, '%'));
       }
       var arr = new Uint8Array(bytes.length);
       for (var i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
@@ -990,10 +1076,11 @@
   /** Convert & download a single image (button on a card). */
   function convertAndDownloadSingle(url, card) {
     captureDownloadOptionsFromMenu();
-    var convTo = state.downloadOptions.convertTo || 'jpeg';
+    var options = Object.assign({}, state.downloadOptions);
+    var convTo = options.convertTo || 'jpeg';
     convertImage(url, convTo, function (dataUrl) {
-      if (dataUrl) downloadDataUrl(dataUrl, url, 0);
-      else downloadSingleImage(url);
+      if (dataUrl) downloadDataUrl(dataUrl, url, 0, options);
+      else downloadSingleImage(url, 0, options);
     });
   }
 
@@ -1001,82 +1088,154 @@
    * Build a ZIP archive from the given URLs and trigger a single download.
    * Dynamically loads 733.js (which defines globalThis.JSZip) if needed.
    */
-  function downloadAsZip(urls) {
-    function buildWithJsZip() {
-      if (typeof globalThis.JSZip !== 'function') {
-        // Try again shortly — the script tag may still be loading.
-        setTimeout(buildWithJsZip, 100);
-        return;
+  var zipLibraryPromise = null;
+
+  // The vendored file is a webpack chunk, not a standalone UMD script.
+  function getZipConstructor() {
+    if (typeof globalThis.JSZip === 'function') return globalThis.JSZip;
+    var chunks = globalThis.webpackChunkimgdl || [];
+    for (var i = 0; i < chunks.length; i++) {
+      var factory = chunks[i] && chunks[i][1] && chunks[i][1][733];
+      if (typeof factory !== 'function') continue;
+      var module = { exports: {} };
+      factory(module, module.exports, { g: globalThis });
+      if (typeof module.exports === 'function') {
+        globalThis.JSZip = module.exports; return module.exports;
       }
-      var zip = new globalThis.JSZip();
-      var pending = urls.length;
-      var folderName = state.downloadOptions.saveFolderName || '';
-      var zipFolder = folderName ? zip.folder(folderName) : zip;
-      var baseName = state.downloadOptions.saveFileName || 'image';
+    }
+    return null;
+  }
 
-      urls.forEach(function (url, idx) {
-        var filename = baseName + '_' + (idx + 1) + '.' + defaultExt(url);
-        fetchAsBlob(url, function (blob) {
-          if (blob) zipFolder.file(filename, blob);
-          pending--;
-          if (pending === 0) {
-            zip.generateAsync({ type: 'blob' }).then(function (blob) {
-              var objUrl = URL.createObjectURL(blob);
-              var zipName = (folderName ? sanitizeFilename(folderName) : 'images') + '.zip';
-              chrome.downloads.download({
-                url: objUrl,
-                filename: zipName,
-                conflictAction: 'uniquify'
-              }, function () {
-                setTimeout(function () { URL.revokeObjectURL(objUrl); }, 5000);
-              });
-            });
-          }
+  function loadZipLibrary() {
+    var Zip = getZipConstructor();
+    if (Zip) return Promise.resolve(Zip);
+    if (zipLibraryPromise) return zipLibraryPromise;
+    zipLibraryPromise = new Promise(function (resolve, reject) {
+      var script = document.createElement('script');
+      var timeout = setTimeout(function () { fail('ZIP library loading timed out.'); }, 10000);
+      function fail(message) {
+        clearTimeout(timeout); script.remove(); reject(new Error(message));
+      }
+      script.src = '733.js'; script.async = true;
+      script.onload = function () {
+        clearTimeout(timeout);
+        try {
+          var Zip = getZipConstructor();
+          if (!Zip) { fail('ZIP library is unavailable.'); return; }
+          resolve(Zip);
+        } catch (error) { fail(error.message || 'Could not initialize the ZIP library.'); }
+      };
+      script.onerror = function () { fail('Could not load the ZIP library.'); };
+      document.head.appendChild(script);
+    }).catch(function (error) { zipLibraryPromise = null; throw error; });
+    return zipLibraryPromise;
+  }
+
+  function blobFromUrl(url) {
+    return new Promise(function (resolve) { fetchAsBlob(url, resolve); });
+  }
+
+  function getZipEntry(url, index, options) {
+    return new Promise(function (resolve) {
+      function finish(blob, converted) {
+        if (!blob) { resolve(null); return; }
+        var ext = defaultExt(url);
+        if (converted) ext = options.convertTo === 'jpeg' ? 'jpg' : options.convertTo;
+        else if (/^image\//i.test(blob.type)) {
+          var mimeExt = blob.type.split('/')[1].split(';')[0].split('+')[0].toLowerCase();
+          if (mimeExt === 'jpeg') mimeExt = 'jpg';
+          if (IMAGE_EXTENSIONS.indexOf(mimeExt) !== -1) ext = mimeExt;
+        }
+        var original = 'image';
+        try {
+          var parsed = new URL(url);
+          if (/^https?:$/.test(parsed.protocol)) original = decodeURIComponent(parsed.pathname.split('/').pop()) || original;
+        } catch (e) {}
+        original = original.replace(/\.[^.]+$/, '');
+        var filename;
+        if (options.saveFileAs === 'CUSTOM_NAME') {
+          filename = applyFilenameTokens(options.saveFileName, { name: original, ext: ext, index: index + 1, url: url });
+        } else if (options.saveFileAs === 'ORIGINAL_FILE_NAME') filename = original + '.' + ext;
+        else filename = 'imgi_' + (index + 1) + '_' + original + '.' + ext;
+        var folder = options.saveFolderName;
+        if (folder === 'basedonurl') {
+          try { folder = new URL(url).hostname; } catch (e) { folder = ''; }
+        }
+        filename = sanitizeFilename(filename);
+        if (folder) filename = sanitizeFilename(folder) + '/' + filename;
+        resolve({ filename: filename, blob: blob });
+      }
+      function fetchOriginal() { blobFromUrl(url).then(function (blob) { finish(blob, false); }); }
+      if (shouldConvert(url, options.convertFrom, options.convertTo)) {
+        convertImage(url, options.convertTo, function (dataUrl) {
+          if (dataUrl) finish(dataUrlToBlob(dataUrl), true); else fetchOriginal();
         });
-      });
-    }
-
-    if (typeof globalThis.JSZip === 'function') {
-      buildWithJsZip();
-    } else {
-      injectScript('733.js', function () {
-        buildWithJsZip();
-      });
-    }
+      } else fetchOriginal();
+    });
   }
 
-  /** Fetch a URL as a Blob (CORS permitting). */
+  /** Run fn over items with at most `limit` pending promises; results keep input order. */
+  function mapWithConcurrency(items, limit, fn) {
+    var results = new Array(items.length);
+    var next = 0;
+    function runNext() {
+      if (next >= items.length) return Promise.resolve();
+      var index = next++;
+      return Promise.resolve()
+        .then(function () { return fn(items[index], index); })
+        .catch(function () { return null; })
+        .then(function (value) { results[index] = value; return runNext(); });
+    }
+    var runners = [];
+    for (var i = 0; i < Math.min(limit, items.length); i++) runners.push(runNext());
+    return Promise.all(runners).then(function () { return results; });
+  }
+
+  function downloadAsZip(urls) {
+    if (!urls.length) return Promise.resolve();
+    var options = Object.assign({}, state.downloadOptions);
+    return loadZipLibrary().then(function (Zip) {
+      return mapWithConcurrency(urls, ZIP_CONCURRENCY, function (url, index) { return getZipEntry(url, index, options); }).then(function (entries) {
+        var zip = new Zip(), failed = 0, used = Object.create(null);
+        entries.forEach(function (entry) {
+          if (!entry) { failed++; return; }
+          var filename = entry.filename;
+          var dot = filename.lastIndexOf('.'), base = dot < 0 ? filename : filename.slice(0, dot), ext = dot < 0 ? '' : filename.slice(dot);
+          var duplicate = 1;
+          while (used[filename]) filename = base + ' (' + (++duplicate) + ')' + ext;
+          used[filename] = true; zip.file(filename, entry.blob);
+        });
+        if (failed === entries.length) throw new Error('No images could be fetched. ZIP was not created.');
+        if (failed) showDownloadError(failed + ' image(s) could not be fetched and were omitted from the ZIP.');
+        return zip.generateAsync({ type: 'blob' });
+      });
+    }).then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var zipName = options.saveFolderName && options.saveFolderName !== 'basedonurl' ? sanitizeFilename(options.saveFolderName) : 'images';
+      chrome.downloads.download({ url: url, filename: zipName + '.zip', conflictAction: 'uniquify' }, function () {
+        if (chrome.runtime.lastError) showDownloadError(chrome.runtime.lastError.message);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+      });
+    }).catch(function (error) { showDownloadError(error.message || 'ZIP download failed.'); });
+  }
+
+  /** Fetch successful responses only; an error document is never an image entry. */
   function fetchAsBlob(url, cb) {
-    // Handle data: URLs directly.
-    if (url.indexOf('data:') === 0) {
-      cb(dataUrlToBlob(url));
-      return;
-    }
-    try {
-      fetch(url, { mode: 'cors' })
-        .then(function (r) { return r.blob(); })
-        .then(function (b) { cb(b); })
-        .catch(function () { cb(null); });
-    } catch (e) {
-      cb(null);
-    }
+    if (url.indexOf('data:') === 0) { cb(dataUrlToBlob(url)); return; }
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, 30000);
+    Promise.resolve().then(function () { return fetch(url, { mode: 'cors', signal: controller.signal }); })
+      .then(function (response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.blob();
+      }).then(function (blob) { clearTimeout(timeout); cb(blob); })
+      .catch(function () { clearTimeout(timeout); cb(null); });
   }
 
-  /** Default file extension for a URL based on its type. */
   function defaultExt(url) {
     var ext = getExtensionFromUrl(url).toLowerCase();
     if (IMAGE_EXTENSIONS.indexOf(ext) !== -1) return ext === 'jpeg' ? 'jpg' : ext;
     return 'jpg';
-  }
-
-  /** Inject a script tag and call back when it has loaded. */
-  function injectScript(src, cb) {
-    var s = document.createElement('script');
-    s.src = src;
-    s.async = true;
-    s.onload = function () { if (cb) cb(); };
-    s.onerror = function () { if (cb) cb(); };
-    document.head.appendChild(s);
   }
 
   /** Reverse image search via Google Images. */
@@ -1163,7 +1322,7 @@
     state._prefBiggerView = !!cfg[STORAGE_KEYS.BIGGER_VIEW];
     var biggerCb = byId('biggerview');
     if (biggerCb) biggerCb.checked = state._prefBiggerView;
-    if (state._prefBiggerView) document.body.classList.add('biggerView');
+    toggleClass(byId('container'), 'bigger', state._prefBiggerView && !state.isSidePanel);
 
     // Two columns.
     state._prefTwoCols = !!cfg[STORAGE_KEYS.TWO_COLS];
@@ -1189,13 +1348,12 @@
     state.downloadOptions.convertTo = cfg[STORAGE_KEYS.CONVERT_TO] || 'jpeg';
     state.downloadOptions.downloadAsZip = !!cfg[STORAGE_KEYS.DOWNLOAD_AS_ZIP];
 
-    // Populate the download menu inputs.
-    setVal('savefoldername', state.downloadOptions.saveFolderName);
-    setVal('saveFileAs', state.downloadOptions.saveFileAs);
-    setVal('saveFileName', state.downloadOptions.saveFileName);
-    setVal('convertFrom', state.downloadOptions.convertFrom);
-    setVal('convertTo', state.downloadOptions.convertTo);
-    setChecked('downloadAsZip', state.downloadOptions.downloadAsZip);
+    populateDownloadControls();
+    var enabled = cfg[STORAGE_KEYS.DOWNLOAD_OPTIONS_ENABLED];
+    if (enabled == null) enabled = !!(state.downloadOptions.saveFolderName || state.downloadOptions.saveFileName ||
+      state.downloadOptions.saveFileAs !== 'SYSTEM_NAME' || state.downloadOptions.convertFrom);
+    setChecked('downloadseparatefolder', enabled);
+    toggleDownloadPreferences();
 
     // Persisted filters.
     var sizeType = cfg[STORAGE_KEYS.SIZE_TYPE] || 'any';
@@ -1207,6 +1365,26 @@
     qsa('[sizeconf]').forEach(function (o) {
       o.classList.toggle('selected', o.getAttribute('sizeconf') === sizeType);
     });
+    // A saved size filter hides images on open; offer the Clear control for it.
+    showClearFilters();
+  }
+
+  function populateDownloadControls() {
+    var o = state.downloadOptions;
+    [['savefoldername', 'savefoldernamePrefs', o.saveFolderName],
+     ['saveFileAs', 'saveFileAsPref', o.saveFileAs],
+     ['saveFileName', 'saveFileNamePref', o.saveFileName],
+     ['convertFrom', 'convertFromPrefs', o.convertFrom],
+     ['convertTo', 'convertToPrefs', o.convertTo]].forEach(function (entry) {
+      setVal(entry[0], entry[2]); setVal(entry[1], entry[2]);
+    });
+    setChecked('downloadAsZip', o.downloadAsZip);
+  }
+
+  function toggleDownloadPreferences() {
+    var cb = byId('downloadseparatefolder');
+    var options = byId('downloadocationcontainer');
+    if (cb && cb.checked) show(options); else hide(options);
   }
 
   /** Set the value of a <select> or <input> by id. */
@@ -1227,9 +1405,18 @@
     var prefsDiv = byId('prefsDiv');
     if (showBtn && prefsDiv) {
       showBtn.addEventListener('click', function () {
+        populateDownloadControls();
+        setChecked('displayInSidePanel', state._prefDisplayMode === 'sidePanel');
+        setChecked('biggerview', state._prefBiggerView);
+        setChecked('donotbother', state._prefDoNotBother);
+        setChecked('allframes', state._prefAllFrames);
+        setChecked('twocols', state._prefTwoCols);
+        toggleDownloadPreferences();
         show(prefsDiv);
       });
     }
+    var downloadOptionsCb = byId('downloadseparatefolder');
+    if (downloadOptionsCb) downloadOptionsCb.addEventListener('change', toggleDownloadPreferences);
     var saveBtn = byId('saveprefs');
     if (saveBtn) saveBtn.addEventListener('click', savePreferences);
     var cancelBtn = byId('saveprefscancel');
@@ -1264,10 +1451,20 @@
     obj[STORAGE_KEYS.TWO_COLS] = twocols;
     obj[STORAGE_KEYS.DO_NOT_BOTHER] = doNotBother;
     obj[STORAGE_KEYS.ALL_FRAMES] = allframes;
+    var enabled = !!(byId('downloadseparatefolder') && byId('downloadseparatefolder').checked);
+    obj[STORAGE_KEYS.DOWNLOAD_OPTIONS_ENABLED] = enabled;
+    var o = state.downloadOptions;
+    o.saveFolderName = enabled ? byId('savefoldernamePrefs').value.trim() : '';
+    o.saveFileAs = enabled ? byId('saveFileAsPref').value : 'SYSTEM_NAME';
+    o.saveFileName = enabled ? byId('saveFileNamePref').value.trim() : '';
+    o.convertFrom = enabled ? byId('convertFromPrefs').value : '';
+    o.convertTo = enabled ? byId('convertToPrefs').value : 'jpeg';
+    persistDownloadOptions();
+    populateDownloadControls();
     try { chrome.storage.local.set(obj); } catch (e) {}
 
     // Apply visual changes immediately.
-    document.body.classList.toggle('biggerView', bigger);
+    toggleClass(byId('container'), 'bigger', bigger && !state.isSidePanel);
     document.body.classList.toggle('twocols', twocols);
 
     // Tell the background about the display-mode change.
@@ -1276,6 +1473,10 @@
         msg: 'changeDisplayMode',
         tabId: state.tabId,
         displayMode: displayMode
+      }, function (response) {
+        var error = chrome.runtime.lastError;
+        if (error || !response || !response.success) showDownloadError((error && error.message) || 'Could not change display mode.');
+        else if (displayMode === 'sidePanel' && !state.isSidePanel) showDownloadError('Side panel enabled. Click the extension toolbar icon to open it.');
       });
     } catch (e) {}
 
@@ -1291,8 +1492,12 @@
     if (reload) reload.addEventListener('click', startScraping);
 
     var stop = byId('stopImageSearch');
+    // executeScript cannot be cancelled: invalidate the scan so its late
+    // result is ignored, and end the search UI immediately.
     if (stop) stop.addEventListener('click', function () {
-      state.stopRequested = true;
+      if (!state.isScraping) return;
+      state.scrapeId++;
+      finishScraping([]);
     });
   }
 
@@ -1306,6 +1511,8 @@
     btn.addEventListener('click', function () {
       var on = !document.body.classList.contains('twocols');
       document.body.classList.toggle('twocols', on);
+      state._prefTwoCols = on;
+      setChecked('twocols', on);
       var obj = {};
       obj[STORAGE_KEYS.TWO_COLS] = on;
       try { chrome.storage.local.set(obj); } catch (e) {}
@@ -1317,6 +1524,25 @@
   // Section 13 — Area screenshot (side panel only)
   // ---------------------------------------------------------------------------
 
+  function listenForTabChanges() {
+    if (!state.isSidePanel) return;
+    function refreshTab() {
+      getActiveTab(function (tab) {
+        if (!tab || tab.windowId !== state.tabWindowId) return;
+        if (state.port && state.port.disconnect) state.port.disconnect();
+        state.tabId = tab.id; state.tabUrl = tab.url || '';
+        state.isScraping = false; state.scrapeId++; state.capturePending = false;
+        connectPort(); startScraping();
+      });
+    }
+    chrome.tabs.onActivated.addListener(function (info) {
+      if (info.windowId === state.tabWindowId) refreshTab();
+    });
+    chrome.tabs.onUpdated.addListener(function (tabId, change) {
+      if (tabId === state.tabId && change.status === 'complete') refreshTab();
+    });
+  }
+
   /**
    * Wire the .captureSelection button.  Injects captureSelection.js into the
    * active tab, then listens for the returnSelection message.
@@ -1325,13 +1551,19 @@
     var btn = qs('.captureSelection');
     if (!btn) return;
     btn.addEventListener('click', function () {
+      if (!state.isSidePanel || state.tabId < 0) return;
+      state.capturePending = true;
       try {
         chrome.scripting.executeScript({
           target: { tabId: state.tabId, allFrames: false },
           files: ['captureSelection.js']
+        }, function () {
+          if (chrome.runtime.lastError) {
+            state.capturePending = false; showDownloadError(chrome.runtime.lastError.message);
+          }
         });
       } catch (e) {
-        // Ignore — button may be hidden in popup mode.
+        state.capturePending = false; showDownloadError(e.message || 'Could not start area capture.');
       }
     });
   }
@@ -1339,10 +1571,12 @@
   /** Listen for the returnSelection message from captureSelection.js. */
   function listenForReturnSelection() {
     try {
-      chrome.runtime.onMessage.addListener(function (message) {
-        if (!message || message.type !== 'returnSelection') return;
+      chrome.runtime.onMessage.addListener(function (message, sender) {
+        if (!message || message.type !== 'returnSelection' || !state.capturePending) return;
+        if (!sender.tab || sender.tab.id !== state.tabId || sender.frameId !== 0) return;
         var rect = message.rect;
-        if (!rect) return;
+        if (!rect || !['x', 'y', 'width', 'height'].every(function (key) { return Number.isFinite(rect[key]); }) || rect.width <= 0 || rect.height <= 0) return;
+        state.capturePending = false;
         captureAndCropScreenshot(rect);
       });
     } catch (e) {}
@@ -1353,16 +1587,21 @@
    * and add the result as a new image card.
    */
   function captureAndCropScreenshot(rect) {
-    try {
-      chrome.tabs.captureVisibleTab(undefined, { format: 'png' }, function (dataUrl) {
-        if (chrome.runtime.lastError || !dataUrl) return;
-        cropDataUrl(dataUrl, rect, function (cropped) {
-          if (cropped) addScreenshotCard(cropped);
+    var tabId = state.tabId;
+    getActiveTab(function (tab) {
+      if (!tab || tab.id !== tabId || tab.windowId !== state.tabWindowId) return;
+      chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' }, function (dataUrl) {
+        if (chrome.runtime.lastError || !dataUrl) {
+          var error = (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'Screenshot capture failed.';
+          if (/activeTab|<all_urls>/.test(error)) error = 'Click the extension toolbar icon on this tab, then retry Capture selection.';
+          showDownloadError(error); return;
+        }
+        getActiveTab(function (active) {
+          if (!active || active.id !== tabId || state.tabId !== tabId) return;
+          cropDataUrl(dataUrl, rect, function (cropped) { if (cropped) addScreenshotCard(cropped); });
         });
       });
-    } catch (e) {
-      // captureVisibleTab may fail in popup mode — silently ignore.
-    }
+    });
   }
 
   /** Crop a PNG data: URL to the given rect (in CSS pixels) using canvas. */
@@ -1370,11 +1609,13 @@
     var img = new Image();
     img.onload = function () {
       try {
-        var dpr = rect.devicePixelRatio || (window.devicePixelRatio || 1);
-        var sx = rect.x * dpr;
-        var sy = rect.y * dpr;
-        var sw = rect.width * dpr;
-        var sh = rect.height * dpr;
+        var scaleX = rect.viewportWidth > 0 ? img.naturalWidth / rect.viewportWidth : (rect.devicePixelRatio || 1);
+        var scaleY = rect.viewportHeight > 0 ? img.naturalHeight / rect.viewportHeight : (rect.devicePixelRatio || 1);
+        var sx = Math.max(0, Math.round(rect.x * scaleX));
+        var sy = Math.max(0, Math.round(rect.y * scaleY));
+        var sw = Math.min(img.naturalWidth - sx, Math.round(rect.width * scaleX));
+        var sh = Math.min(img.naturalHeight - sy, Math.round(rect.height * scaleY));
+        if (sw <= 0 || sh <= 0) { cb(null); return; }
         var canvas = document.createElement('canvas');
         canvas.width = sw;
         canvas.height = sh;
@@ -1394,18 +1635,34 @@
     var idx = state.allImages.length;
     var img = { url: dataUrl, index: idx, w: 0, h: 0, loaded: false };
     state.allImages.push(img);
-    var container = byId('imgsContainer');
-    if (container) {
-      var card = buildImageCard(img);
-      container.appendChild(card);
-      probeImageDimensions(img, card);
-    }
+    renderImages();
+    probeImageDimensions(img, null);
     showFoundCount(state.allImages.length);
   }
 
   // ---------------------------------------------------------------------------
   // Section 14 — Misc UI wiring
   // ---------------------------------------------------------------------------
+
+  function wireFilterMenus() {
+    qsa('.filters > div').forEach(function (host) {
+      var menu = qs('.selectMenu', host);
+      if (!menu || host.classList.contains('clearFilters')) return;
+      host.addEventListener('click', function (e) {
+        if (menu.contains(e.target)) return;
+        var open = menu.classList.contains('--active');
+        qsa('.filters .selectMenu').forEach(function (m) { m.classList.remove('--active'); });
+        menu.classList.toggle('--active', !open);
+        host.setAttribute('aria-expanded', String(!open));
+      });
+      document.addEventListener('click', function (e) {
+        if (!host.contains(e.target)) {
+          menu.classList.remove('--active');
+          host.setAttribute('aria-expanded', 'false');
+        }
+      });
+    });
+  }
 
   function wireUI() {
     // Clicking outside the download menu closes it.

@@ -11,7 +11,7 @@
  *   2. Display mode     — popup / sidePanel toggle
  *   3. Message hub       — runtime.onMessage for popup <-> background communication
  *   4. Port handler      — popup port disconnect clears selection state in the tab
- *   5. Download shaping  — onDeterminingFilename renames extension-initiated downloads
+ *   5. Download shaping  — supplies relative filenames for image requests
  *   6. Referer injection — declarativeNetRequest session rules for cross-origin image fetches
  *   7. Install/update    — migrate any legacy chrome.storage.sync data to local
  *
@@ -20,6 +20,8 @@
  */
 (function () {
   'use strict';
+
+  importScripts('sanitize.js');
 
   /* =========================================================================
    * 1. Storage wrapper
@@ -56,12 +58,11 @@
    * @returns {Promise<void>}
    */
   function setPref(key, value) {
-    return new Promise(function (resolve) {
+    return new Promise(function (resolve, reject) {
       var obj = {};
       obj[STORAGE_PREFIX + key] = value;
       chrome.storage.local.set(obj, function () {
-        // Swallow lastError — storage writes are best-effort.
-        if (chrome.runtime.lastError) { /* intentionally ignored */ }
+        if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
         resolve();
       });
     });
@@ -86,28 +87,25 @@
    * @param {string} mode — 'popup' or 'sidePanel'
    * @returns {Promise<void>}
    */
+  var currentDisplayMode = MODE_POPUP;
+  var displayModeUpdates = Promise.resolve();
+  var displayModeGeneration = 0;
+
   function applyDisplayMode(mode) {
-    return new Promise(function (resolve) {
-      var isSidePanel = mode === MODE_SIDE_PANEL;
-
-      // Toggle the toolbar popup. When side-panel mode is active we clear the
-      // popup URL so clicking the icon opens the side panel instead.
-      try {
-        chrome.action.setPopup({ popup: isSidePanel ? '' : 'popup.html' });
-      } catch (e) { /* action API not available */ }
-
-      // Configure the side panel so it can host popup.html.
-      if (chrome.sidePanel && chrome.sidePanel.setOptions) {
-        try {
-          chrome.sidePanel.setOptions({
-            enabled: isSidePanel,
-            path: 'popup.html'
-          });
-        } catch (e) { /* setOptions not available */ }
-      }
-
-      resolve();
+    var isSidePanel = mode === MODE_SIDE_PANEL && !!chrome.sidePanel;
+    displayModeUpdates = displayModeUpdates.catch(function () {}).then(function () {
+      var panel = chrome.sidePanel;
+      if (!panel) return;
+      return Promise.resolve(panel.setOptions({ enabled: isSidePanel, path: 'popup.html?view=sidePanel' })).then(function () {
+        // Handle the action ourselves so Chrome grants activeTab for captures.
+        if (panel.setPanelBehavior) return panel.setPanelBehavior({ openPanelOnActionClick: false });
+      });
+    }).then(function () {
+      return chrome.action.setPopup({ popup: isSidePanel ? '' : 'popup.html' });
+    }).then(function () {
+      currentDisplayMode = isSidePanel ? MODE_SIDE_PANEL : MODE_POPUP;
     });
+    return displayModeUpdates;
   }
 
   /**
@@ -115,7 +113,9 @@
    * @returns {Promise<string>} the resolved mode
    */
   function initDisplayMode() {
+    var generation = displayModeGeneration;
     return getPref(PREF_DISPLAY_MODE).then(function (mode) {
+      if (generation !== displayModeGeneration) return currentDisplayMode;
       if (mode !== MODE_SIDE_PANEL && mode !== MODE_POPUP) {
         mode = MODE_POPUP;
       }
@@ -126,18 +126,17 @@
   /**
    * Switch the display mode and persist it.
    * @param {string} mode — 'popup' or 'sidePanel'
-   * @param {number} [tabId] — active tab, used when opening the side panel
    * @returns {Promise<{success:boolean, mode:string}>}
    */
-  function changeDisplayMode(mode, tabId) {
-    return setPref(PREF_DISPLAY_MODE, mode).then(function () {
-      return applyDisplayMode(mode);
+  function changeDisplayMode(mode) {
+    displayModeGeneration++;
+    var resolvedMode = mode === MODE_SIDE_PANEL && chrome.sidePanel ? MODE_SIDE_PANEL : MODE_POPUP;
+    return applyDisplayMode(resolvedMode).then(function () {
+      return setPref(PREF_DISPLAY_MODE, resolvedMode);
     }).then(function () {
-      // If switching to side panel, open it immediately on the active tab.
-      if (mode === MODE_SIDE_PANEL && tabId != null && chrome.sidePanel && chrome.sidePanel.open) {
-        try { chrome.sidePanel.open({ tabId: tabId }); } catch (e) { /* ignore */ }
-      }
-      return { success: true, mode: mode };
+      // The next toolbar click opens the panel through the action listener.
+      // Opening here after asynchronous storage/API calls loses the user gesture.
+      return { success: true, mode: resolvedMode };
     });
   }
 
@@ -150,7 +149,7 @@
    */
 
   // Runtime variable holding the most recent download options set by the popup.
-  // Consumed by chrome.downloads.onDeterminingFilename.
+  // Compatibility fallback for callers without an explicit options snapshot.
   var downloadOptions = null;
 
   /**
@@ -159,18 +158,12 @@
    * @param {number} [tabId]
    */
   function openExtensionUi(tabId) {
-    getPref(PREF_DISPLAY_MODE).then(function (mode) {
-      var useSidePanel = mode === MODE_SIDE_PANEL && chrome.sidePanel && chrome.sidePanel.open;
-      if (useSidePanel && tabId != null) {
-        try {
-          chrome.sidePanel.open({ tabId: tabId });
-          return;
-        } catch (e) { /* fall through to popup */ }
-      }
-      if (chrome.action && chrome.action.openPopup) {
-        try { chrome.action.openPopup({ tabId: tabId }); } catch (e) { /* ignore */ }
-      }
-    });
+    // Invoke the browser API immediately while any incoming user gesture is live.
+    if (currentDisplayMode === MODE_SIDE_PANEL && chrome.sidePanel && chrome.sidePanel.open && tabId != null) {
+      return Promise.resolve(chrome.sidePanel.open({ tabId: tabId }));
+    }
+    if (chrome.action && chrome.action.openPopup) return Promise.resolve(chrome.action.openPopup());
+    return Promise.reject(new Error('The extension UI cannot be opened in this browser.'));
   }
 
   /**
@@ -199,8 +192,46 @@
           return true; // async
         }
 
+        case 'downloadImage': {
+          var sourceUrl = message.sourceUrl || message.url;
+          var name = 'image';
+          try {
+            var source = new URL(sourceUrl);
+            if (source.protocol === 'http:' || source.protocol === 'https:') {
+              name = decodeURIComponent(source.pathname.split('/').pop()) || name;
+            }
+          } catch (e) {}
+          if (message.url.indexOf('data:image/') === 0) {
+            var mime = message.url.match(/^data:image\/([a-z0-9.+-]+)/i);
+            var ext = mime ? mime[1].split('+')[0] : 'png';
+            if (ext === 'jpeg') ext = 'jpg';
+            name = name.replace(/\.[^.]+$/, '') + '.' + ext;
+          }
+          var startDownload = function (resolvedName) {
+            var filename = shapeDownloadFilename({
+              originalName: resolvedName, url: sourceUrl,
+              index: Math.max(1, parseInt(message.index, 10) || 1),
+              options: message.downloadOptions || {}
+            });
+            chrome.downloads.download({ url: message.url, filename: filename, conflictAction: 'uniquify' }, function (id) {
+              var error = chrome.runtime.lastError;
+              sendResponse(error ? { success: false, error: error.message } : { success: true, id: id });
+            });
+          };
+          // Chrome does not add an extension to a supplied filename, so URLs
+          // like /media/abc?format=jpg would otherwise save as "abc".
+          if (IMAGE_EXT_RE.test(name)) {
+            startDownload(name);
+          } else {
+            inferImageExtension(sourceUrl).then(function (inferred) {
+              startDownload(inferred ? name.replace(SCRIPT_EXT_RE, '') + '.' + inferred : name);
+            });
+          }
+          return true;
+        }
+
         case 'setDownloadOptions': {
-          // Store download options for the onDeterminingFilename listener.
+          // Retain the existing message contract; image requests carry snapshots.
           var opts = message.downloadOptions || {};
           downloadOptions = {
             saveFileAs: opts.saveFileAs || 'SYSTEM_NAME',
@@ -250,9 +281,12 @@
 
         case 'openExtension': {
           // Open the popup or side panel for the active tab.
-          openExtensionUi(sender.tab ? sender.tab.id : null);
-          sendResponse({ success: true });
-          return false;
+          openExtensionUi(sender.tab ? sender.tab.id : null).then(function () {
+            sendResponse({ success: true });
+          }).catch(function (error) {
+            sendResponse({ success: false, error: error.message });
+          });
+          return true;
         }
 
         default:
@@ -325,18 +359,13 @@
    * 5. Download filename shaping
    * =========================================================================
    *
-   * chrome.downloads.onDeterminingFilename lets us rewrite the filename for
-   * downloads initiated by this extension. We detect our own downloads via a
-   * marker prefix (imgdl___-_) embedded in the suggested filename or by
-   * matching the initiator extension id.
+   * Image requests carry their source URL, index and naming options. Supply the
+   * resulting relative filename when starting the download.
    */
-
-  // Marker prefix embedded in download filenames so we can identify our own.
-  var DOWNLOAD_MARKER = 'imgdl___-_';
 
   /**
    * Extract the download index from a URL's query string if present.
-   * The popup appends ?index=N to image URLs so we can sequence downloads.
+   * Compatibility fallback; current popup requests supply the index separately.
    * @param {string} url
    * @returns {string} — index string, defaults to '1'
    */
@@ -349,16 +378,45 @@
     }
   }
 
+  var IMAGE_EXT_RE = /\.(?:jpe?g|png|gif|webp|avif|svg|bmp|ico|tiff?|jfif|heic|heif)$/i;
+  // Server-script suffixes replaced by the inferred image extension (view.php -> view.jpg).
+  var SCRIPT_EXT_RE = /\.(?:php|aspx?|ashx|axd|jsp|cgi|do|html?)$/i;
+  // Query parameters image CDNs use to select the output format.
+  var FORMAT_PARAMS = ['format', 'fm', 'ext'];
+  var HEAD_TIMEOUT_MS = 5000;
+
+  /** Map a format/MIME subtype to a file extension, or '' when not an image type. */
+  function normalizeImageExt(value) {
+    var ext = String(value || '').toLowerCase().split('+')[0];
+    if (ext === 'jpeg' || ext === 'pjpeg') ext = 'jpg';
+    if (ext === 'x-icon' || ext === 'vnd.microsoft.icon') ext = 'ico';
+    return IMAGE_EXT_RE.test('.' + ext) ? ext : '';
+  }
+
   /**
-   * Strip the download marker from a filename, if present.
-   * @param {string} filename
-   * @returns {string}
+   * Determine the image extension of a URL whose path has none: first from a
+   * format query parameter, then from a HEAD request's Content-Type.
+   * @param {string} url
+   * @returns {Promise<string>} extension without the dot, or ''
    */
-  function stripMarker(filename) {
-    if (typeof filename === 'string' && filename.indexOf(DOWNLOAD_MARKER) !== -1) {
-      return filename.split(DOWNLOAD_MARKER).pop();
+  function inferImageExtension(url) {
+    var params;
+    try { params = new URL(url).searchParams; } catch (e) { return Promise.resolve(''); }
+    for (var i = 0; i < FORMAT_PARAMS.length; i++) {
+      var fromQuery = normalizeImageExt(params.get(FORMAT_PARAMS[i]));
+      if (fromQuery) return Promise.resolve(fromQuery);
     }
-    return filename;
+    if (typeof fetch !== 'function') return Promise.resolve('');
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, HEAD_TIMEOUT_MS);
+    return fetch(url, { method: 'HEAD', credentials: 'include', signal: controller.signal }).then(function (response) {
+      var type = (response.ok && response.headers.get('content-type')) || '';
+      var match = type.match(/^\s*image\/([a-z0-9.+-]+)/i);
+      return match ? normalizeImageExt(match[1]) : '';
+    }).catch(function () { return ''; }).then(function (ext) {
+      clearTimeout(timer);
+      return ext;
+    });
   }
 
   /**
@@ -384,20 +442,22 @@
   /**
    * Build the final filename for an extension-initiated download.
    * @param {object} params
-   * @param {string} params.originalName — filename without marker
+   * @param {string} params.originalName — source URL basename or MIME-derived name
    * @param {string} params.url         — source URL
-   * @param {string} params.filename     — raw filename from the download item
+   * @param {number} params.index        — batch position
+   * @param {object} params.options      — per-request naming settings
    * @returns {string} shaped filename (may include subfolder path)
    */
   function shapeDownloadFilename(params) {
     var originalName = params.originalName;
     var url = params.url;
-    var opts = downloadOptions || {};
+    var opts = params.options || downloadOptions || {};
     var saveFileAs = opts.saveFileAs || 'SYSTEM_NAME';
     var template = opts.saveFileName || '';
     var folderPref = opts.saveFolderName || '';
 
     // Split original name into base + extension.
+    originalName = String(originalName).split(/[\\/]/).pop() || 'image';
     var parts = String(originalName).split('.');
     var ext = parts.length > 1 ? parts.pop() : '';
     var base = parts.join('.') || 'image';
@@ -405,7 +465,7 @@
     var shaped;
 
     if (saveFileAs === 'ORIGINAL_FILE_NAME') {
-      // Preserve the original filename exactly as the server provided it.
+      // Preserve the source URL's basename.
       shaped = originalName || (base + (ext ? '.' + ext : ''));
     } else if (saveFileAs === 'CUSTOM_NAME') {
       // Use the token template. applyFilenameTokens handles {ext} inclusion
@@ -413,7 +473,7 @@
       if (typeof globalThis.applyFilenameTokens === 'function') {
         shaped = globalThis.applyFilenameTokens(template, {
           name: base,
-          index: extractIndexFromUrl(url),
+          index: params.index || extractIndexFromUrl(url),
           ext: ext,
           url: url,
           now: new Date()
@@ -423,49 +483,20 @@
       }
     } else {
       // SYSTEM_NAME (default): deterministic index-based name.
-      var index = extractIndexFromUrl(url);
+      var index = params.index || extractIndexFromUrl(url);
       shaped = 'imgi_' + index + '_' + originalName;
     }
 
-    // Prepend subfolder if specified.
+    shaped = sanitizeFilename(shaped);
+
+    // Treat user input as one folder segment, preventing invalid download paths.
     var folder = resolveSubfolder(folderPref, url);
+    if (folder) folder = sanitizeFilename(folder);
     if (folder) {
       shaped = folder + '/' + shaped;
     }
 
     return shaped;
-  }
-
-  /**
-   * onDeterminingFilename listener. Returns true to indicate an async suggest
-   * call is pending.
-   */
-  function onDeterminingFilename(downloadItem, suggest) {
-    // Only shape downloads that originate from this extension.
-    var isOurs = false;
-    if (downloadItem.byExtensionId === chrome.runtime.id) {
-      isOurs = true;
-    } else if (typeof downloadItem.filename === 'string' && downloadItem.filename.indexOf(DOWNLOAD_MARKER) !== -1) {
-      isOurs = true;
-    }
-
-    if (!isOurs) {
-      return false; // let Chrome use the default name
-    }
-
-    try {
-      var originalName = stripMarker(downloadItem.filename || '');
-      var shaped = shapeDownloadFilename({
-        originalName: originalName,
-        url: downloadItem.url || '',
-        filename: downloadItem.filename || ''
-      });
-      suggest({ filename: shaped, conflictAction: 'uniquify' });
-    } catch (e) {
-      // Fall back to the original filename if shaping fails.
-      suggest({ filename: downloadItem.filename, conflictAction: 'uniquify' });
-    }
-    return true;
   }
 
   /* =========================================================================
@@ -589,7 +620,8 @@
         });
 
         chrome.storage.local.set(localObj, function () {
-          // Clear sync after copying regardless of lastError.
+          // Retain the source preferences if the local write fails.
+          if (chrome.runtime.lastError) { resolve(); return; }
           chrome.storage.sync.clear(function () {
             if (chrome.runtime.lastError) { /* ignore */ }
             resolve();
@@ -618,6 +650,18 @@
    */
 
   // Message hub.
+  if (chrome.action && chrome.action.onClicked) {
+    chrome.action.onClicked.addListener(function (tab) {
+      // Call synchronously within the toolbar/shortcut gesture, before any
+      // storage access. Popup mode is handled by action.default_popup.
+      if (!chrome.sidePanel || !tab || tab.id == null) return;
+      try {
+        Promise.resolve(chrome.sidePanel.open({ tabId: tab.id })).catch(function (error) {
+          console.error('Could not open image download side panel:', error);
+        });
+      } catch (error) { console.error('Could not open image download side panel:', error); }
+    });
+  }
   if (chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener(handleMessage);
   }
@@ -627,10 +671,9 @@
     chrome.runtime.onConnect.addListener(handleConnect);
   }
 
-  // Download filename shaping.
-  if (chrome.downloads && chrome.downloads.onDeterminingFilename) {
-    chrome.downloads.onDeterminingFilename.addListener(onDeterminingFilename);
-  }
+  // Filenames are supplied per request to downloads.download. Registering a
+  // determining-filename listener discards that supplied name in Chrome, even
+  // when the listener declines to suggest a replacement.
 
   // Clean up referer rules when all downloads from this extension finish.
   if (chrome.downloads && chrome.downloads.onChanged) {

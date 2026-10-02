@@ -114,24 +114,18 @@
     }
 
     // Gather every <img> in the document, including those inside open shadow roots.
-    // We do a best-effort shadow scan one level deep.
+    // Recursively scan open shadow roots, including nested components.
     function allImages() {
-        var imgs = Array.prototype.slice.call(document.images || []);
-        // Best-effort shadow DOM sweep.
-        var walker = document.createTreeWalker(
-            document.body || document.documentElement,
-            NodeFilter.SHOW_ELEMENT,
-            null
-        );
-        var node;
-        while ((node = walker.nextNode())) {
-            if (node.shadowRoot) {
-                var inner = node.shadowRoot.querySelectorAll('img');
-                for (var i = 0; i < inner.length; i++) {
-                    if (imgs.indexOf(inner[i]) === -1) imgs.push(inner[i]);
-                }
+        var imgs = [];
+        function scan(root) {
+            var elements = root.querySelectorAll('*');
+            for (var i = 0; i < elements.length; i++) {
+                var el = elements[i];
+                if (el.tagName === 'IMG') imgs.push(el);
+                if (el.shadowRoot) scan(el.shadowRoot);
             }
         }
+        scan(document);
         return imgs;
     }
 
@@ -147,8 +141,8 @@
 
         imgs.forEach(function (img) {
             var src = normalizeUrl(img.currentSrc || img.src);
+            img.classList.toggle(HIGHLIGHT_CLASS, set.has(src));
             if (set.has(src)) {
-                img.classList.add(HIGHLIGHT_CLASS);
                 count++;
             }
         });
@@ -158,7 +152,7 @@
     }
 
     function clearHighlights() {
-        var marked = document.querySelectorAll('.' + HIGHLIGHT_CLASS);
+        var marked = allImages().filter(function (img) { return img.classList.contains(HIGHLIGHT_CLASS); });
         for (var i = 0; i < marked.length; i++) {
             marked[i].classList.remove(HIGHLIGHT_CLASS);
         }
@@ -219,7 +213,7 @@
      *
      *     window.postMessage({ action: 'imgdl_open' }, '*');
      *
-     * We forward it to the background as { type: 'openExtension' }.
+     * We forward it to the background as { msg: 'openExtension' }.
      */
     function handlePageMessage(event) {
         var data = event.data;
@@ -228,9 +222,16 @@
         if (event.source !== window) return;
 
         if (data.action === PAGE_OPEN_ACTION) {
+            // Any script on the page can post this message. Only honor it right
+            // after a real user interaction so pages cannot pop the UI unprompted.
+            var activation = navigator.userActivation;
+            if (!activation || !activation.isActive) {
+                log('ignored page open request without user activation');
+                return;
+            }
             log('received page open request, forwarding to background');
             try {
-                chrome.runtime.sendMessage({ type: 'openExtension' }, function () {
+                chrome.runtime.sendMessage({ msg: 'openExtension' }, function () {
                     // Swallow chrome.runtime.lastError silently — the background
                     // may be momentarily unavailable (service worker restart).
                     void chrome.runtime.lastError;

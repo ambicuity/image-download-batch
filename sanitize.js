@@ -12,7 +12,7 @@
  * substitute illegal characters. The result is safe across Windows, macOS,
  * and Linux: illegal chars are replaced, trailing dots/spaces are trimmed,
  * Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) are escaped,
- * and the length is capped at 255 characters.
+ * and the length is capped at 255 UTF-8 bytes.
  *
  * Loaded as a <script> by popup.html and imported by background.js; exposes
  * `globalThis.sanitizeFilename` (and `self.sanitizeFilename` / `window.
@@ -41,26 +41,22 @@
   // dots collapses to an underscore to avoid "." and ".." path traversal.
   var ONLY_DOTS = /^\.+$/;
 
-  // Maximum filename length on most filesystems (NTFS, ext4, APFS).
+  // Maximum filename byte length on most filesystems (NTFS, ext4, APFS).
   var MAX_LENGTH = 255;
 
   /**
-   * Truncate a string to at most `max` UTF-16 code units while never
-   * splitting a surrogate pair. If truncation would leave a lone high
-   * surrogate, the trailing half-pair is dropped.
+   * Truncate to at most `max` UTF-8 bytes without splitting a code point.
    */
   function truncateSafe(value, max) {
-    if (value.length <= max) {
-      return value;
+    var encoder = new TextEncoder();
+    if (encoder.encode(value).length <= max) return value;
+    var result = '', length = 0;
+    for (var character of value) {
+      var bytes = encoder.encode(character).length;
+      if (length + bytes > max) break;
+      result += character; length += bytes;
     }
-    var cut = value.slice(0, max);
-    var last = cut.charCodeAt(max - 1);
-    // High surrogate range: 0xD800 - 0xDBFF. If the last unit is a high
-    // surrogate, drop it to avoid emitting a lone surrogate.
-    if (last >= 0xD800 && last <= 0xDBFF) {
-      cut = cut.slice(0, max - 1);
-    }
-    return cut;
+    return result;
   }
 
   /**
@@ -97,16 +93,15 @@
     // 3. A name composed entirely of dots is unsafe; replace it.
     str = str.replace(ONLY_DOTS, replacement || '_');
 
-    // 4. Escape Windows reserved device names by appending an underscore.
-    if (RESERVED_NAME.test(str)) {
-      str = str + '_';
-    }
-
-    // 5. Trim trailing dots and spaces (Windows forbids them).
+    // Trim first: "CON " must not become a reserved name after checking it.
     str = str.replace(TRAILING_DOT_SPACE, '');
+    if (RESERVED_NAME.test(str)) str = '_' + str;
 
     // 6. Enforce maximum length.
-    str = truncateSafe(str, MAX_LENGTH);
+    var extension = str.match(/\.[a-z0-9]{1,16}$/i);
+    if (extension) {
+      str = truncateSafe(str.slice(0, -extension[0].length), MAX_LENGTH - extension[0].length) + extension[0];
+    } else str = truncateSafe(str, MAX_LENGTH);
 
     // 7. Re-trim trailing dots/spaces in case truncation exposed one.
     str = str.replace(TRAILING_DOT_SPACE, '');

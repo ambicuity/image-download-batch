@@ -128,6 +128,13 @@
       return rawUrl;
     }
 
+    // Signed CDN URLs authenticate the exact path/query; rewriting breaks access.
+    var signed = false;
+    url.searchParams.forEach(function (_value, key) {
+      if (/^(?:sig|signature|token|auth|authorization|expires|policy|key-pair-id|x-amz-.+|x-goog-.+)$/i.test(key)) signed = true;
+    });
+    if (signed || /\/s--[^/]+--\//.test(url.pathname)) return rawUrl;
+
     // 1. Drop sizing/format query params (case-insensitive).
     var toDelete = [];
     url.searchParams.forEach(function (_value, key) {
@@ -203,41 +210,38 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Parse a srcset attribute into a list of candidate URLs.
-   * Handles descriptors like "1x", "2x", "100w" and commas inside data URIs.
+   * Parse a srcset attribute into a list of candidate URLs, following the
+   * HTML candidate grammar: a URL is a run of non-whitespace characters, so
+   * commas inside it (Cloudinary "w_300,c_fill", data URIs) are preserved.
+   * Candidates are separated by a comma after the descriptors, or by a comma
+   * ending the URL itself.
    */
   function parseSrcset(srcset) {
     var candidates = [];
     if (!srcset || typeof srcset !== 'string') return candidates;
-
-    // Split by commas that are followed by optional whitespace and a non-comma
-    // character — but data URIs can contain commas, so we split carefully:
-    // walk character-by-character, tracking whether we are inside a data: URI.
-    var parts = [];
-    var current = '';
-    var inData = false;
-    for (var i = 0; i < srcset.length; i++) {
-      var ch = srcset[i];
-      if (!inData && ch === ',' && current.trim()) {
-        parts.push(current.trim());
-        current = '';
-        continue;
+    var pos = 0;
+    var len = srcset.length;
+    while (pos < len) {
+      // Skip leading whitespace and separator commas.
+      while (pos < len && /[\s,]/.test(srcset[pos])) pos++;
+      if (pos >= len) break;
+      var start = pos;
+      while (pos < len && !/\s/.test(srcset[pos])) pos++;
+      var url = srcset.slice(start, pos);
+      if (/,$/.test(url)) {
+        // A trailing comma ends this candidate; it has no descriptors.
+        url = url.replace(/,+$/, '');
+      } else {
+        // Skip descriptors (1x, 300w) up to the next comma outside parens.
+        var depth = 0;
+        while (pos < len) {
+          var ch = srcset[pos];
+          if (ch === '(') depth++;
+          else if (ch === ')') depth = Math.max(0, depth - 1);
+          else if (ch === ',' && depth === 0) break;
+          pos++;
+        }
       }
-      current += ch;
-      // Detect the start of a data URI to avoid splitting on its commas.
-      if (current.length <= 5 && current.toLowerCase() === 'data:') inData = true;
-      // A space after the URL portion signals we've exited the data URI's
-      // inner content (descriptors follow).
-      if (inData && ch === ' ') inData = false;
-    }
-    if (current.trim()) parts.push(current.trim());
-
-    for (var p = 0; p < parts.length; p++) {
-      var token = parts[p].trim();
-      if (!token) continue;
-      // The URL is the first whitespace-delimited chunk; the rest is a
-      // descriptor (1x, 2w, etc.) which we don't need here.
-      var url = token.split(/\s+/)[0];
       if (url) candidates.push(url);
     }
     return candidates;
@@ -254,11 +258,14 @@
   function extractBackgroundUrls(cssValue) {
     var urls = [];
     if (!cssValue) return urls;
-    // Matches url(...) with optional single/double quotes.
-    var re = /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi;
+    // Matches url("..."), url('...') and url(...). Quoted values may contain
+    // the other quote character and parentheses (inline SVG data URIs) and
+    // backslash escapes, which computed styles use for embedded quotes.
+    var re = /url\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^"'()\s]+))\s*\)/gi;
     var match;
     while ((match = re.exec(cssValue)) !== null) {
-      urls.push(match[2]);
+      var raw = match[1] !== undefined ? match[1] : match[2] !== undefined ? match[2] : match[3];
+      if (raw) urls.push(raw.replace(/\\(.)/g, '$1'));
     }
     return urls;
   }
@@ -320,7 +327,7 @@
    */
   function isTrackingPixel(img) {
     try {
-      return img.naturalWidth <= 1 && img.naturalHeight <= 1;
+      return img.complete && img.naturalWidth === 1 && img.naturalHeight === 1;
     } catch (e) {
       return false;
     }
@@ -488,10 +495,10 @@
       if (html) {
         // Match src/href/content/poster/data attribute values ending in
         // image extensions, as well as bare http(s) image URLs.
-        var rawRe = /https?:\/\/[^\s"'<>)]+\.(?:jpg|jpeg|png|gif|webp|avif|svg|bmp|ico|tif|tiff|jfif|heic|heif)/gi;
+        var rawRe = /https?:\/\/[^\s"'<>)]+\.(?:jpeg|jpg|png|gif|webp|avif|svg|bmp|ico|tiff|tif|jfif|heic|heif)(?=[?#\s\"'<>)]|$)(?:\?[^\s\"'<>)#]*)?(?:#[^\s\"'<>)]*)?/gi;
         var rawMatch;
         while ((rawMatch = rawRe.exec(html)) !== null) {
-          add(rawMatch[0]);
+          add(rawMatch[0].replace(/&amp;/g, '&'));
         }
       }
     } catch (e) {
