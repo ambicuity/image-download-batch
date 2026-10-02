@@ -100,16 +100,47 @@ jobs:
         with:
           name: extension-zip
 
+      # Exchange the key for a token with a signed JWT (OAuth 2.0 JWT bearer grant).
+      # Unlike google-github-actions/auth, this needs no IAM Credentials API.
       - name: Authenticate with service account
         id: sa
         if: env.SERVICE_ACCOUNT_JSON != ''
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.CWS_SERVICE_ACCOUNT_JSON }}
-          token_format: access_token
-          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
-          create_credentials_file: false
-          export_environment_variables: false
+        run: |
+          node <<'EOF'
+          const crypto = require('crypto');
+          const fs = require('fs');
+          const key = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
+          const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+          const now = Math.floor(Date.now() / 1000);
+          const claims = {
+            iss: key.client_email,
+            scope: 'https://www.googleapis.com/auth/chromewebstore',
+            aud: key.token_uri,
+            iat: now,
+            exp: now + 3600
+          };
+          const unsigned = b64({ alg: 'RS256', typ: 'JWT' }) + '.' + b64(claims);
+          const signature = crypto.sign('RSA-SHA256', Buffer.from(unsigned), key.private_key).toString('base64url');
+          fetch(key.token_uri, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+              assertion: unsigned + '.' + signature
+            })
+          }).then(response => response.json()).then(body => {
+            if (!body.access_token) {
+              console.log('::error::Service-account token request failed: ' + (body.error_description || body.error || 'no token'));
+              process.exit(1);
+            }
+            console.log('::add-mask::' + body.access_token);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'access_token=' + body.access_token + '\n');
+            console.log('Obtained Chrome Web Store access token for ' + key.client_email);
+          }).catch(error => {
+            console.log('::error::Service-account token request failed: ' + error.message);
+            process.exit(1);
+          });
+          EOF
 
       - name: Upload & publish
         env:
