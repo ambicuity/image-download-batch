@@ -155,7 +155,7 @@ the end of `docs/superpowers/tests/bug-regressions.test.cjs`. Each failed before
 | B9 | A saved size filter hides images on open with no Clear control; Clear leaves stale min-size inputs. | Restored filters never called `showClearFilters`; Clear did not reset inputs. | Show Clear after restoring; reset inputs on Clear. |
 | B10 | Any web page can open the extension popup/side panel at will via `postMessage({action:'imgdl_open'})`. | Bridge accepted unauthenticated page messages without a gesture. | Honor the request only with transient user activation. |
 
-Not fixed (noted): referer helpers remain uncalled; context-menu downloads still
+Not fixed (noted): context-menu downloads still
 bypass the many-files confirmation; page highlighting cannot match full-resolution
 rewritten URLs.
 
@@ -176,3 +176,9 @@ against a local fixture server. Downloads used Chrome's default handling with re
   A wrong extension is corrected to the served MIME type.
 - Not exercised: native toolbar/side-panel opening, physical drag capture, the context menu,
   and service-worker suspension.
+
+## v1.0.2
+
+Removed the unused `declarativeNetRequest` permission and the never-called Referer
+rule helpers (and their `downloads.onChanged` cleanup listener). Referrer-protected
+hosts behave exactly as before; the Chrome Web Store no longer sees an unused permission.

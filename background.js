@@ -12,8 +12,7 @@
  *   3. Message hub       — runtime.onMessage for popup <-> background communication
  *   4. Port handler      — popup port disconnect clears selection state in the tab
  *   5. Download shaping  — supplies relative filenames for image requests
- *   6. Referer injection — declarativeNetRequest session rules for cross-origin image fetches
- *   7. Install/update    — migrate any legacy chrome.storage.sync data to local
+ *   6. Install/update    — migrate any legacy chrome.storage.sync data to local
  *
  * This is original code. It does not reference any other extension or reuse
  * bundled artifacts.
@@ -500,89 +499,7 @@
   }
 
   /* =========================================================================
-   * 6. Referer injection
-   * =========================================================================
-   *
-   * Some image hosts reject requests without a Referer matching the page
-   * origin. When the popup fetches a cross-origin image we add a session
-   * declarativeNetRequest rule that sets the Referer header to the page
-   * origin for requests from the extension to that image URL.
-   *
-   * Rules are created on demand and cleaned up when downloads complete.
-   */
-
-  // Start of the dynamic rule id range we allocate.
-  var DNR_BASE_ID = 5000;
-  // Map of ruleId -> { url, origin } so we can remove rules precisely.
-  var activeRefererRules = {};
-
-  /**
-   * Add (or refresh) a Referer rule for a specific image URL.
-   * @param {string} imageUrl   — the image URL being fetched
-   * @param {string} pageUrl    — the page that links the image (for origin)
-   * @returns {Promise<void>}
-   */
-  function addRefererRule(imageUrl, pageUrl) {
-    if (!chrome.declarativeNetRequest || !chrome.declarativeNetRequest.updateSessionRules) {
-      return Promise.resolve();
-    }
-    var origin = '';
-    try { origin = new URL(pageUrl).origin; } catch (e) { return Promise.resolve(); }
-
-    // Allocate a stable rule id based on a simple counter.
-    var ruleId = DNR_BASE_ID + Object.keys(activeRefererRules).length + 1;
-    var rule = {
-      id: ruleId,
-      priority: 1,
-      action: {
-        type: 'modifyHeaders',
-        requestHeaders: [
-          { header: 'Referer', operation: 'set', value: origin + '/' }
-        ]
-      },
-      condition: {
-        urlFilter: imageUrl,
-        resourceTypes: ['image']
-      }
-    };
-
-    return new Promise(function (resolve) {
-      chrome.declarativeNetRequest.updateSessionRules(
-        { addRules: [rule], removeRuleIds: [ruleId] },
-        function () {
-          if (chrome.runtime.lastError) { /* rule add failed */ }
-          activeRefererRules[ruleId] = { url: imageUrl, origin: origin };
-          resolve();
-        }
-      );
-    });
-  }
-
-  /**
-   * Remove all active referer rules. Called when downloads complete or the
-   * worker is about to be idle.
-   * @returns {Promise<void>}
-   */
-  function clearRefererRules() {
-    if (!chrome.declarativeNetRequest || !chrome.declarativeNetRequest.updateSessionRules) {
-      return Promise.resolve();
-    }
-    var ids = Object.keys(activeRefererRules).map(function (k) { return parseInt(k, 10); });
-    if (ids.length === 0) return Promise.resolve();
-    return new Promise(function (resolve) {
-      chrome.declarativeNetRequest.updateSessionRules(
-        { removeRuleIds: ids },
-        function () {
-          if (chrome.runtime.lastError) { /* ignore */ }
-          activeRefererRules = {};
-          resolve();
-        }
-      );
-    });
-  }
-
-  /* =========================================================================
-   * 7. Install / update handler
+   * 6. Install / update handler
    * =========================================================================
    *
    * bg-entry.js handles opening welcome.html on install. Here we handle the
@@ -674,15 +591,6 @@
   // Filenames are supplied per request to downloads.download. Registering a
   // determining-filename listener discards that supplied name in Chrome, even
   // when the listener declines to suggest a replacement.
-
-  // Clean up referer rules when all downloads from this extension finish.
-  if (chrome.downloads && chrome.downloads.onChanged) {
-    chrome.downloads.onChanged.addListener(function (delta) {
-      if (delta.state && delta.state.current === 'complete') {
-        clearRefererRules();
-      }
-    });
-  }
 
   // Install/update.
   if (chrome.runtime && chrome.runtime.onInstalled) {

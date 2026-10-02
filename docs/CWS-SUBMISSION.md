@@ -1,6 +1,6 @@
 # Chrome Web Store — Submission Readiness
 
-Reference for publishing **Image Download - Batch** (Manifest V3, v1.0.1) to the
+Reference for publishing **Image Download - Batch** (Manifest V3, v1.0.2) to the
 Chrome Web Store. Copy the text below into the dashboard's **Privacy practices**
 tab; it matches the permissions in `manifest.json`.
 
@@ -17,7 +17,6 @@ Everything in the extension serves that one purpose.
 | `downloads` | Saving discovered images to the user's computer, individually or as a ZIP. |
 | `scripting` | Injecting the image scraper into the active tab to find images (`<img>`, `srcset`, `<picture>`, CSS backgrounds, SVG, shadow DOM, lazy-loaded, `og:image`, video posters, etc.), and the area-capture overlay. |
 | `storage` | Persisting the user's download options and UI preferences locally. |
-| `declarativeNetRequest` | Intended for setting the page's `Referer` on referrer-protected image requests. **Not called in v1.0.1** — remove it in the next release, or wire it up, before relying on this justification (reviewers reject unused permissions). |
 | `sidePanel` | Optional side-panel display mode for persistent access while browsing. |
 | `contextMenus` | The right-click "Download all images on this page" action. |
 | `host_permissions: http://*/*, https://*/*` | A general-purpose image downloader must read image URLs on **whatever page the user is on**; the target site is not known in advance. All processing is local — no data leaves the browser. |
@@ -37,18 +36,17 @@ Privacy policy: `PRIVACY-POLICY.md` (publish it at a public URL for the dashboar
 
 1. **Broad host permissions** — expected for this category; justified above. Cannot
    be narrowed without breaking the core "download from any page" function.
-2. **`declarativeNetRequest`** — currently unused (referer helpers are never
-   called). Remove it in the next version unless the referer feature is wired up.
-3. **`new Function()` in bundled vendor code** — present in webpack polyfills
+2. **`new Function()` in bundled vendor code** — present in webpack polyfills
    (`popup.js` globalThis shim, `733.js`/JSZip `setImmediate` shim). Both are
    guarded / rarely reached and are standard library output; the default MV3 CSP
    is not violated in normal flows. Removing them requires re-bundling from source.
-4. **`.LICENSE.txt` files** — kept next to bundled JS for third-party license
+3. **`.LICENSE.txt` files** — kept next to bundled JS for third-party license
    compliance; do not delete.
 
 ## Pre-submission checklist
 - [x] `update_url` removed from manifest (CWS rejects it in uploaded packages)
-- [x] `version` = 1.0.1
+- [x] `version` = 1.0.2
+- [x] Unused `declarativeNetRequest` permission removed
 - [x] `activeTab` declared (required for area capture)
 - [x] 16 / 48 / 128 px icons declared
 - [x] No inline scripts / inline event handlers (CSP-clean)

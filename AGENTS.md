@@ -10,7 +10,7 @@
 
 - `manifest.json` — defines the service worker (`bg-entry.js`), popup (`popup.html`), content script (`inject.js`), and keyboard shortcut `Ctrl+Shift+Y` / `Cmd+Shift+Y`.
 - `bg-entry.js` — service worker bootstrap; opens welcome.html on install, then loads `filenameTokens.js`, `contextMenu.js`, and `background.js` via `importScripts`.
-- `background.js` — service worker core; orchestrates downloads, messaging, storage, display mode (popup/sidePanel), download filename shaping, and referer injection.
+- `background.js` — service worker core; orchestrates downloads, messaging, storage, display mode (popup/sidePanel), and download filename shaping.
 - `popup.html` + `popup.js` + `popup.css` + `popup-bridge.js` — popup UI and side-panel logic (preferences include `displayMode: sidePanel`).
 - **Content scripts**
   - `inject.js` — auto-injected into pages; highlights selected images, forwards page-to-extension messages.
