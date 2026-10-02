@@ -34,7 +34,7 @@
    },
    "manifest_version": 3,
    "name": "__MSG_appName__",
-   "permissions": [ "downloads", "storage", "scripting", "declarativeNetRequest", "sidePanel", "contextMenus" ],
+   "permissions": [ "activeTab", "downloads", "storage", "scripting", "declarativeNetRequest", "sidePanel", "contextMenus" ],
    "short_name": "Image Download",
-   "version": "1.0.0"
+   "version": "1.0.1"
 }

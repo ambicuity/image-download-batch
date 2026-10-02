@@ -266,7 +266,7 @@
      * ------------------------------------------------------------------ */
     // Expose a tiny debug API under a namespaced global so it never collides.
     window.__idbInject = {
-        version: '1.0.0',
+        version: '1.0.1',
         highlight: applyHighlights,
         clear: clearHighlights,
         debug: debugEnabled
