@@ -3,7 +3,8 @@
 ## What this repo is
 
 - **Chrome Extension (Manifest V3)** — the repo root IS the unpacked extension. Load it directly in `chrome://extensions`.
-- **No build system** — there are no `package.json` scripts, no webpack config, no CI, and no tests. All JavaScript is original, unminified source — readable and editable directly.
+- **No build system** — there are no `package.json` scripts and no webpack config. All JavaScript is original, unminified source — readable and editable directly.
+- **Node test suite, no bundler** — the tests under `docs/superpowers/tests/` run the *shipped* source through `node:vm` with Chrome/DOM doubles. `.github/workflows/publish.yml` runs them on every release tag.
 - **All source is in the root** (not a `dist/` folder). `popup.js`, `background.js`, `inject.js`, etc. are plain ES2015+ JavaScript files.
 
 ## Entrypoints & architecture
@@ -25,10 +26,25 @@
 
 ## How to verify changes
 
+Run the automated suite first — it needs no browser and no build step:
+
+```sh
+node --test docs/superpowers/tests/bug-regressions.test.cjs
+node --test docs/superpowers/tests/bug-regressions-3.test.cjs
+for t in dedupeUrls filenameTokens flattenDedupeImages upgradeToLargest; do
+  node "docs/superpowers/tests/$t.test.cjs"
+done
+```
+
+The `bug-regressions*.test.cjs` files are `node --test` suites; the four helper suites are plain scripts that exit non-zero on failure. CI runs exactly these commands.
+
+Then check the extension in Chrome:
+
 1. Open Chrome → `chrome://extensions` → enable **Developer mode**.
 2. Click **Load unpacked** and select this directory.
 3. Test the popup via the toolbar icon or the keyboard shortcut.
-4. There is no automated test suite; all verification is manual.
+
+A new root-level runtime script must be added to `ROOT_FILES` in `scripts/build-zip.sh`, otherwise the published package is missing it.
 
 ## Localization
 
