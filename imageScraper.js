@@ -184,6 +184,18 @@
    * to the highest-density one, keeping first-seen order and deduping.
    */
   function upgradeToLargest(urls) {
+    var entries = upgradeToLargestWithOriginals(urls);
+    var out = [];
+    for (var i = 0; i < entries.length; i++) out.push(entries[i].url);
+    return out;
+  }
+
+  /**
+   * Same as upgradeToLargest, but each entry keeps the URL it was rewritten
+   * from. The popup needs the original URL so the page can highlight the
+   * image it actually renders.
+   */
+  function upgradeToLargestWithOriginals(urls) {
     if (!Array.isArray(urls)) return [];
     var out = [];
     var byFamily = Object.create(null);
@@ -195,9 +207,9 @@
       var prev = byFamily[info.key];
       if (prev === undefined) {
         byFamily[info.key] = { index: out.length, density: info.density };
-        out.push(upgraded);
+        out.push({ url: upgraded, original: raw });
       } else if (info.density > prev.density) {
-        out[prev.index] = upgraded;
+        out[prev.index] = { url: upgraded, original: raw };
         prev.density = info.density;
       }
     }
@@ -571,7 +583,19 @@
       chrome.storage.local.get('imgdl_preferFullRes', function (cfg) {
         try {
           if (cfg && cfg.imgdl_preferFullRes && result.images) {
-            result.images = upgradeToLargest(result.images);
+            var entries = upgradeToLargestWithOriginals(result.images);
+            var images = [];
+            var aliases = [];
+            for (var i = 0; i < entries.length; i++) {
+              images.push(entries[i].url);
+              // Keep the rewritten-from URL so the page can highlight the
+              // image it actually renders.
+              if (entries[i].original !== entries[i].url) {
+                aliases.push({ url: entries[i].url, original: entries[i].original });
+              }
+            }
+            result.images = images;
+            result.aliases = aliases;
           }
         } catch (e) {
           // Upgrade failure must never break scraping.

@@ -21,6 +21,7 @@
   'use strict';
 
   importScripts('sanitize.js');
+  importScripts('downloadNaming.js');
 
   /* =========================================================================
    * 1. Storage wrapper
@@ -152,6 +153,26 @@
   var downloadOptions = null;
 
   /**
+   * Load the persisted naming options into the worker so that a download
+   * request which carries no options snapshot still honours the user's saved
+   * preferences (custom name template, subfolder).
+   * @returns {Promise<void>}
+   */
+  function loadStoredDownloadOptions() {
+    return Promise.all([
+      getPref('savefileas'),
+      getPref('savefilename'),
+      getPref('savefoldername')
+    ]).then(function (values) {
+      downloadOptions = {
+        saveFileAs: values[0] || 'SYSTEM_NAME',
+        saveFileName: values[1] || '',
+        saveFolderName: values[2] || ''
+      };
+    }).catch(function () { /* keep the defaults */ });
+  }
+
+  /**
    * Open the extension UI. If side panel mode is active and available, open
    * the side panel; otherwise fall back to the toolbar popup.
    * @param {number} [tabId]
@@ -193,39 +214,18 @@
 
         case 'downloadImage': {
           var sourceUrl = message.sourceUrl || message.url;
-          var name = 'image';
-          try {
-            var source = new URL(sourceUrl);
-            if (source.protocol === 'http:' || source.protocol === 'https:') {
-              name = decodeURIComponent(source.pathname.split('/').pop()) || name;
-            }
-          } catch (e) {}
-          if (message.url.indexOf('data:image/') === 0) {
-            var mime = message.url.match(/^data:image\/([a-z0-9.+-]+)/i);
-            var ext = mime ? mime[1].split('+')[0] : 'png';
-            if (ext === 'jpeg') ext = 'jpg';
-            name = name.replace(/\.[^.]+$/, '') + '.' + ext;
-          }
-          var startDownload = function (resolvedName) {
+          resolveFinalName(sourceUrl, message.url).then(function (resolvedName) {
             var filename = shapeDownloadFilename({
               originalName: resolvedName, url: sourceUrl,
               index: Math.max(1, parseInt(message.index, 10) || 1),
-              options: message.downloadOptions || {}
+              options: message.downloadOptions || {},
+              storedOptions: downloadOptions
             });
             chrome.downloads.download({ url: message.url, filename: filename, conflictAction: 'uniquify' }, function (id) {
               var error = chrome.runtime.lastError;
               sendResponse(error ? { success: false, error: error.message } : { success: true, id: id });
             });
-          };
-          // Chrome does not add an extension to a supplied filename, so URLs
-          // like /media/abc?format=jpg would otherwise save as "abc".
-          if (IMAGE_EXT_RE.test(name)) {
-            startDownload(name);
-          } else {
-            inferImageExtension(sourceUrl).then(function (inferred) {
-              startDownload(inferred ? name.replace(SCRIPT_EXT_RE, '') + '.' + inferred : name);
-            });
-          }
+          });
           return true;
         }
 
@@ -362,141 +362,12 @@
    * resulting relative filename when starting the download.
    */
 
-  /**
-   * Extract the download index from a URL's query string if present.
-   * Compatibility fallback; current popup requests supply the index separately.
-   * @param {string} url
-   * @returns {string} — index string, defaults to '1'
+  /*
+   * The naming helpers (shapeDownloadFilename, resolveFinalName,
+   * inferImageExtension, resolveSubfolder) live in downloadNaming.js so the
+   * context menu and this worker produce identical file names.  They are
+   * loaded with importScripts() above and are available as globals.
    */
-  function extractIndexFromUrl(url) {
-    try {
-      var idx = new URL(url).searchParams.get('index');
-      return idx || '1';
-    } catch (e) {
-      return '1';
-    }
-  }
-
-  var IMAGE_EXT_RE = /\.(?:jpe?g|png|gif|webp|avif|svg|bmp|ico|tiff?|jfif|heic|heif)$/i;
-  // Server-script suffixes replaced by the inferred image extension (view.php -> view.jpg).
-  var SCRIPT_EXT_RE = /\.(?:php|aspx?|ashx|axd|jsp|cgi|do|html?)$/i;
-  // Query parameters image CDNs use to select the output format.
-  var FORMAT_PARAMS = ['format', 'fm', 'ext'];
-  var HEAD_TIMEOUT_MS = 5000;
-
-  /** Map a format/MIME subtype to a file extension, or '' when not an image type. */
-  function normalizeImageExt(value) {
-    var ext = String(value || '').toLowerCase().split('+')[0];
-    if (ext === 'jpeg' || ext === 'pjpeg') ext = 'jpg';
-    if (ext === 'x-icon' || ext === 'vnd.microsoft.icon') ext = 'ico';
-    return IMAGE_EXT_RE.test('.' + ext) ? ext : '';
-  }
-
-  /**
-   * Determine the image extension of a URL whose path has none: first from a
-   * format query parameter, then from a HEAD request's Content-Type.
-   * @param {string} url
-   * @returns {Promise<string>} extension without the dot, or ''
-   */
-  function inferImageExtension(url) {
-    var params;
-    try { params = new URL(url).searchParams; } catch (e) { return Promise.resolve(''); }
-    for (var i = 0; i < FORMAT_PARAMS.length; i++) {
-      var fromQuery = normalizeImageExt(params.get(FORMAT_PARAMS[i]));
-      if (fromQuery) return Promise.resolve(fromQuery);
-    }
-    if (typeof fetch !== 'function') return Promise.resolve('');
-    var controller = new AbortController();
-    var timer = setTimeout(function () { controller.abort(); }, HEAD_TIMEOUT_MS);
-    return fetch(url, { method: 'HEAD', credentials: 'include', signal: controller.signal }).then(function (response) {
-      var type = (response.ok && response.headers.get('content-type')) || '';
-      var match = type.match(/^\s*image\/([a-z0-9.+-]+)/i);
-      return match ? normalizeImageExt(match[1]) : '';
-    }).catch(function () { return ''; }).then(function (ext) {
-      clearTimeout(timer);
-      return ext;
-    });
-  }
-
-  /**
-   * Resolve a subfolder name. "basedonurl" means use the hostname of the
-   * source URL; any other non-empty value is used literally.
-   * @param {string} folder  — raw folder preference
-   * @param {string} url     — source URL (for hostname resolution)
-   * @returns {string} — resolved folder segment (no trailing slash), or ''
-   */
-  function resolveSubfolder(folder, url) {
-    if (!folder) return '';
-    if (folder === 'basedonurl') {
-      try {
-        var host = new URL(url).hostname;
-        return host || '';
-      } catch (e) {
-        return '';
-      }
-    }
-    return String(folder);
-  }
-
-  /**
-   * Build the final filename for an extension-initiated download.
-   * @param {object} params
-   * @param {string} params.originalName — source URL basename or MIME-derived name
-   * @param {string} params.url         — source URL
-   * @param {number} params.index        — batch position
-   * @param {object} params.options      — per-request naming settings
-   * @returns {string} shaped filename (may include subfolder path)
-   */
-  function shapeDownloadFilename(params) {
-    var originalName = params.originalName;
-    var url = params.url;
-    var opts = params.options || downloadOptions || {};
-    var saveFileAs = opts.saveFileAs || 'SYSTEM_NAME';
-    var template = opts.saveFileName || '';
-    var folderPref = opts.saveFolderName || '';
-
-    // Split original name into base + extension.
-    originalName = String(originalName).split(/[\\/]/).pop() || 'image';
-    var parts = String(originalName).split('.');
-    var ext = parts.length > 1 ? parts.pop() : '';
-    var base = parts.join('.') || 'image';
-
-    var shaped;
-
-    if (saveFileAs === 'ORIGINAL_FILE_NAME') {
-      // Preserve the source URL's basename.
-      shaped = originalName || (base + (ext ? '.' + ext : ''));
-    } else if (saveFileAs === 'CUSTOM_NAME') {
-      // Use the token template. applyFilenameTokens handles {ext} inclusion
-      // and auto-appends the extension when {ext} is absent.
-      if (typeof globalThis.applyFilenameTokens === 'function') {
-        shaped = globalThis.applyFilenameTokens(template, {
-          name: base,
-          index: params.index || extractIndexFromUrl(url),
-          ext: ext,
-          url: url,
-          now: new Date()
-        });
-      } else {
-        shaped = template ? template + (ext ? '.' + ext : '') : originalName;
-      }
-    } else {
-      // SYSTEM_NAME (default): deterministic index-based name.
-      var index = params.index || extractIndexFromUrl(url);
-      shaped = 'imgi_' + index + '_' + originalName;
-    }
-
-    shaped = sanitizeFilename(shaped);
-
-    // Treat user input as one folder segment, preventing invalid download paths.
-    var folder = resolveSubfolder(folderPref, url);
-    if (folder) folder = sanitizeFilename(folder);
-    if (folder) {
-      shaped = folder + '/' + shaped;
-    }
-
-    return shaped;
-  }
 
   /* =========================================================================
    * 6. Install / update handler
@@ -599,5 +470,9 @@
 
   // Apply the stored display mode on every worker startup.
   initDisplayMode().catch(function () { /* ignore — defaults to popup */ });
+
+  // Load the stored naming options so requests without a snapshot still use
+  // the user's saved preferences.
+  loadStoredDownloadOptions().catch(function () { /* ignore — defaults apply */ });
 
 })();

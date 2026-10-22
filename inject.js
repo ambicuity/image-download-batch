@@ -133,21 +133,31 @@
      * Highlight application
      * ------------------------------------------------------------------ */
 
-    function applyHighlights(urls) {
+    /**
+     * Apply the highlight to every image in the document.
+     *
+     * @param {string[]} urls — the selected image URLs as shown in the grid
+     * @param {string[]} [aliases] — the original URLs the page renders, used
+     *   when the grid shows a full-resolution (rewritten) URL
+     * @returns {number} the number of highlighted images
+     */
+    function applyHighlights(urls, aliases) {
         injectHighlightStyle();
         var set = toNormalizedSet(urls);
+        var aliasSet = toNormalizedSet(aliases || []);
         var imgs = allImages();
         var count = 0;
 
         imgs.forEach(function (img) {
             var src = normalizeUrl(img.currentSrc || img.src);
-            img.classList.toggle(HIGHLIGHT_CLASS, set.has(src));
-            if (set.has(src)) {
+            var hit = set.has(src) || aliasSet.has(src);
+            img.classList.toggle(HIGHLIGHT_CLASS, hit);
+            if (hit) {
                 count++;
             }
         });
 
-        log('highlighted', count, 'image(s) for', set.size, 'url(s)');
+        log('highlighted', count, 'image(s) for', set.size + aliasSet.size, 'url(s)');
         return count;
     }
 
@@ -174,7 +184,8 @@
                 var urls = Array.isArray(message.urls) ? message.urls
                     : Array.isArray(message.images) ? message.images
                     : [];
-                var highlighted = applyHighlights(urls);
+                var aliases = Array.isArray(message.aliases) ? message.aliases : [];
+                var highlighted = applyHighlights(urls, aliases);
                 // Acknowledge asynchronously-safe.
                 if (typeof sendResponse === 'function') {
                     sendResponse({ ok: true, count: highlighted });
