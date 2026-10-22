@@ -182,3 +182,42 @@ against a local fixture server. Downloads used Chrome's default handling with re
 Removed the unused `declarativeNetRequest` permission and the never-called Referer
 rule helpers (and their `downloads.onChanged` cleanup listener). Referrer-protected
 hosts behave exactly as before; the Chrome Web Store no longer sees an unused permission.
+
+## Third audit pass — twelve further fixes
+
+A full read of the runtime (manifest, service worker, popup, scraper, content
+scripts, packaging) was followed by a defect hunt. Every fix below has a
+regression case in `docs/superpowers/tests/bug-regressions-3.test.cjs` (R1–R11)
+that fails on the previous code.
+
+| # | Failure | Cause | Fix |
+| --- | --- | --- | --- |
+| R1 | Every card download was named `imgi_1_<name>` | The card action dropped `img.index` | Pass the image's page index through the card's Download/Convert actions |
+| R2 | A selection hidden by a filter was dropped; with no visible selection the extension downloaded every visible image | `getSelectedOrAllUrls()` read the DOM while the selection lived in `state.selectedUrls` | Make the selection set the source of truth; "Deselect all" clears it entirely |
+| R3 | Filter menus stayed open over the grid after an option was picked | Option handlers never removed `--active` | `closeFilterMenus()` on every option |
+| R4 | The right-click action ignored every download preference | `chrome.downloads.download()` was called without a filename | Share `downloadNaming.js` with the worker; shape every name the same way |
+| R5 | The right-click action bypassed the many-files confirmation | No threshold check on that route | Hold the batch in session storage and confirm it in the UI |
+| R6 | `setDownloadOptions` had no effect | `params.options \|\| downloadOptions` — the snapshot is always truthy | Merge the snapshot *over* the stored options; load them at start-up |
+| R7 | The ZIP ignored the naming preferences and nested the subfolder twice | Archive name derived from the folder only; entries re-prefixed | Name the archive with the user's rules; keep the folder out of the entries |
+| R8 | "Save download options" silently rewrote the "Specify Download Options" preference | `persistDownloadOptions()` derived a user-owned flag | Only the Preferences dialog writes the flag |
+| R9 | The hotkey badge showed the macOS shortcut on every platform and was a dead link | Hardcoded in the markup | Read the real shortcut via `chrome.commands.getAll()`; link to `chrome://extensions/shortcuts` |
+| R10 | Full-resolution URLs were never highlighted on the page | The scraper rewrote the URL the page does not render | Carry the rewritten-from URL through to the content script |
+| R11 | The card's Download action ignored the menu options while its Convert action applied them | Only some routes call `captureDownloadOptionsFromMenu()` | Capture the menu options before the download |
+
+The naming helpers moved from `background.js` into the shared `downloadNaming.js`
+so the popup, the ZIP builder and the context menu produce identical names.
+
+### Verification
+
+- Regression suite: **12/12** new cases, **36/36** pre-existing cases and **63/63**
+  helper cases pass (111 total). Each new case fails on the previous code.
+- **Real-browser verification** in Chrome for Testing 156 with the unpacked
+  extension, a local fixture server and real files on disk: the service worker
+  boots with the new import chain and reports no errors; a per-card download
+  landed as `imgi_2_plain.png`; saved preferences produced
+  `photos/2-plain.png`; a ZIP landed as `photos/images.zip`; a selection hidden
+  by a filter still downloaded while no card was visible; the pending-batch
+  dialog appeared; and the page highlighted its image while the grid showed the
+  full-resolution URL.
+- The right-click menu itself cannot be triggered programmatically, so its
+  registration still needs one manual right-click in a loaded extension.

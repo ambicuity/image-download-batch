@@ -1,6 +1,6 @@
 # Chrome Web Store — Submission Readiness
 
-Reference for publishing **Image Download - Batch** (Manifest V3, v1.0.2) to the
+Reference for publishing **Image Download - Batch** (Manifest V3, v1.0.3) to the
 Chrome Web Store. Copy the text below into the dashboard's **Privacy practices**
 tab; it matches the permissions in `manifest.json`.
 
@@ -45,7 +45,7 @@ Privacy policy: `PRIVACY-POLICY.md` (publish it at a public URL for the dashboar
 
 ## Pre-submission checklist
 - [x] `update_url` removed from manifest (CWS rejects it in uploaded packages)
-- [x] `version` = 1.0.2
+- [x] `version` = 1.0.3
 - [x] Unused `declarativeNetRequest` permission removed
 - [x] `activeTab` declared (required for area capture)
 - [x] 16 / 48 / 128 px icons declared
