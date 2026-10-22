@@ -474,6 +474,11 @@
       window.open(img.url, '_blank');
     }));
     actions.appendChild(actionButton('download', 'Download', function () {
+      // Apply the naming options currently shown in the download menu, the
+      // same way the card's Convert action does. Without this the button
+      // silently uses the last saved values instead of what the user just
+      // typed.
+      captureDownloadOptionsFromMenu();
       downloadSingleImage(img.url, img.index);
     }));
     actions.appendChild(actionButton('convert', 'Convert', function () {

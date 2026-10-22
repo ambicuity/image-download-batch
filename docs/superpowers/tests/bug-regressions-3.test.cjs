@@ -517,6 +517,32 @@ test('R9: the Preferences hotkey badge shows the shortcut configured for this pl
 });
 
 /* -------------------------------------------------------------------------- *
+ * R11 — the card's Download action ignores the download-menu options
+ * -------------------------------------------------------------------------- */
+
+test('R11: the card Download action applies the options currently shown in the download menu', () => {
+  const p = popup3();
+  p.ids.savefoldername.value = 'photos';
+  p.ids.saveFileAs.value = 'CUSTOM_NAME';
+  p.ids.saveFileName.value = '{index}-{name}';
+
+  p.state.allImages = [{ url: 'https://cdn.test/photo.jpg', index: 4, loaded: true, w: 10, h: 10 }];
+  p.renderImages();
+  const card = p.cards()[0];
+  const downloadBtn = card.querySelectorAll('.imgAction').find(b => b.textContent === 'Download');
+  downloadBtn.fire('click');
+
+  const request = p.messages.find(m => m.msg === 'downloadImage');
+  assert.ok(request, 'a download request was sent');
+  assert.equal(request.downloadOptions.saveFolderName, 'photos',
+    'the subfolder typed in the download menu is applied');
+  assert.equal(request.downloadOptions.saveFileAs, 'CUSTOM_NAME',
+    'the naming mode selected in the download menu is applied');
+  assert.equal(request.downloadOptions.saveFileName, '{index}-{name}',
+    'the custom-name template typed in the download menu is applied');
+});
+
+/* -------------------------------------------------------------------------- *
  * R10 — full-resolution URLs are not highlighted
  * -------------------------------------------------------------------------- */
 
