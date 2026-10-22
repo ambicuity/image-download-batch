@@ -105,16 +105,16 @@ test('4: editing custom size updates the filter without reclicking the option', 
   const p = popup(); p.wireFilters(); p.ids.minwidthinput.value = '600'; p.ids.minheightinput.value = '300'; p.ids.minwidthinput.fire('input');
   assert.equal(p.state.filters.size, 'custom'); assert.equal(p.state.filters.minWidth, 600); assert.equal(p.state.filters.minHeight, 300);
 });
-test('5: indexed, isolated naming preserves signed URLs and converted extensions', () => {
+test('5: indexed, isolated naming preserves signed URLs and converted extensions', async () => {
   const p = popup(), w = worker(); const url = 'https://cdn.test/photo.webp?token=signed&index=99';
   p.state.downloadOptions.saveFileAs = 'CUSTOM_NAME'; p.state.downloadOptions.saveFileName = '{name}-{index:3}';
-  p.downloadSingleImage(url, 6); p.state.downloadOptions.saveFileName = 'other'; w.send(p.messages[0]);
+  p.downloadSingleImage(url, 6); p.state.downloadOptions.saveFileName = 'other'; await w.sendAsync(p.messages[0]);
   assert.equal(w.downloads[0].url, url); assert.equal(w.downloads[0].filename, 'photo-007.webp');
-  p.downloadDataUrl('data:image/png;base64,YQ==', url, 7); w.send(p.messages[1]);
+  p.downloadDataUrl('data:image/png;base64,YQ==', url, 7); await w.sendAsync(p.messages[1]);
   assert.equal(w.downloads[1].filename, 'other.png');
-  w.send({ msg: 'downloadImage', url: 'data:image/png;base64,YQ==', index: 1 });
+  await w.sendAsync({ msg: 'downloadImage', url: 'data:image/png;base64,YQ==', index: 1 });
   assert.equal(w.downloads[2].filename, 'imgi_1_image.png');
-  w.send({ msg: 'downloadImage', url, index: 2, downloadOptions: { saveFolderName: '../bad/folder' } });
+  await w.sendAsync({ msg: 'downloadImage', url, index: 2, downloadOptions: { saveFolderName: '../bad/folder' } });
   assert.equal(w.downloads[3].filename, '.._bad_folder/imgi_2_photo.webp');
   // Chrome ignores download()'s filename when a determining listener is present.
   assert.equal(w.determining, undefined);

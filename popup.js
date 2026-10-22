@@ -31,6 +31,9 @@
   /** Threshold above which the "many files" warning dialog is shown. */
   var MANY_FILES_THRESHOLD = 30;
 
+  /** Session-storage key holding a batch that awaits the user's confirmation. */
+  var PENDING_BATCH_KEY = 'imgdl_pendingBatch';
+
   /** Parallel fetch/convert limit for ZIP entries; queued work must not eat its timeout. */
   var ZIP_CONCURRENCY = 6;
 
@@ -96,6 +99,8 @@
     _prefTwoCols: false,
     _prefDoNotBother: false,
     _prefAllFrames: false,
+    // Maps a full-resolution URL back to the URL the page actually renders.
+    imageAliases: {},
     // Callback storage for the many-files dialog.
     _pendingDownload: null,
     selectedUrls: new Set(),
@@ -223,6 +228,8 @@
     wireManyFilesDialog();
     listenForReturnSelection();
     listenForTabChanges();
+    updateHotkeyBadge();
+    consumePendingBatch();
   }
 
   /** Connect to background via chrome.runtime.connect. */
@@ -279,23 +286,37 @@
           return;
         }
         var urls = collectImageUrls(results);
-        finishScraping(urls);
+        finishScraping(urls.urls, urls.aliasMap);
       }
     );
   }
 
   /**
    * Collect & dedupe image URLs from executeScript results array.
+   *
+   * Also collects the "aliases" reported by the scraper: when the
+   * prefer-full-resolution option rewrote a URL, the alias maps the rewritten
+   * URL back to the one the page actually renders.
+   *
    * @param {Array} results - chrome.scripting.executeScript results
-   * @returns {string[]}
+   * @returns {{urls: string[], aliasMap: Object}}
    */
   function collectImageUrls(results) {
     var seen = Object.create(null);
     var out = [];
-    if (!results) return out;
+    var aliasMap = Object.create(null);
+    if (!results) return { urls: out, aliasMap: aliasMap };
     for (var i = 0; i < results.length; i++) {
       var res = results[i] && results[i].result;
       if (!res || !res.images) continue;
+      if (Array.isArray(res.aliases)) {
+        for (var a = 0; a < res.aliases.length; a++) {
+          var alias = res.aliases[a];
+          if (alias && typeof alias.url === 'string' && typeof alias.original === 'string') {
+            aliasMap[alias.url] = alias.original;
+          }
+        }
+      }
       for (var j = 0; j < res.images.length; j++) {
         var u = res.images[j];
         if (typeof u !== 'string' || !u.trim()) continue;
@@ -305,19 +326,24 @@
         out.push(key);
       }
     }
-    return out;
+    return { urls: out, aliasMap: aliasMap };
   }
 
   /** Scraping is done (success or cancelled) — render and reset UI. */
-  function finishScraping(urls) {
+  function finishScraping(urls, aliasMap) {
     state.isScraping = false;
     hide(byId('stopImageSearch'));
     hide(byId('spinner'));
     hide(byId('searchingimages'));
 
     state.selectedUrls.clear();
+    state.imageAliases = aliasMap || Object.create(null);
     state.allImages = urls.map(function (url, idx) {
-      return { url: url, index: idx, w: 0, h: 0, loaded: false };
+      return {
+        url: url,
+        original: state.imageAliases[url] || url,
+        index: idx, w: 0, h: 0, loaded: false
+      };
     });
 
     renderImages();
@@ -448,10 +474,10 @@
       window.open(img.url, '_blank');
     }));
     actions.appendChild(actionButton('download', 'Download', function () {
-      downloadSingleImage(img.url);
+      downloadSingleImage(img.url, img.index);
     }));
     actions.appendChild(actionButton('convert', 'Convert', function () {
-      convertAndDownloadSingle(img.url, card);
+      convertAndDownloadSingle(img.url, card, img.index);
     }));
     actions.appendChild(actionButton('searchsimilarimgs', 'Search', function () {
       reverseImageSearch(img.url);
@@ -612,6 +638,20 @@
     }
   }
 
+  /**
+   * Close an open filter dropdown. Picking an option must dismiss the menu,
+   * otherwise it stays open over the results grid.
+   * @param {Element} [menu] — the menu to close; defaults to every filter menu
+   */
+  function closeFilterMenus(menu) {
+    var menus = menu ? [menu] : qsa('.filters .selectMenu');
+    menus.forEach(function (m) { m.classList.remove('--active'); });
+    if (menu) {
+      var host = menu.parentNode;
+      if (host && host.setAttribute) host.setAttribute('aria-expanded', 'false');
+    }
+  }
+
   /** Wire up all filter dropdowns and the URL input. */
   function wireFilters() {
     // Size dropdown.
@@ -632,6 +672,7 @@
             if (mw) state.filters.minWidth = intOrZero(mw.value);
             if (mh) state.filters.minHeight = intOrZero(mh.value);
           }
+          closeFilterMenus(sizeMenu);
           renderImages();
           showClearFilters();
         });
@@ -693,6 +734,7 @@
           });
           item.classList.add('selected');
           state.filters.sort = item.getAttribute('sortconf');
+          closeFilterMenus(sortMenu);
           renderImages();
           showClearFilters();
         });
@@ -723,6 +765,7 @@
         });
         item.classList.add('selected');
         state.filters[filterKey] = item.getAttribute(attrName);
+        closeFilterMenus(menu);
         renderImages();
         showClearFilters();
       });
@@ -793,6 +836,9 @@
       var cb = qs('.imgCheckbox', c);
       if (cb) cb.checked = anyUnselected;
     });
+    // "Deselect all" also clears the images a filter currently hides, so the
+    // next download does not resurrect them.
+    if (!anyUnselected) state.selectedUrls.clear();
     updateSelectAllState(anyUnselected);
     sendSelectedImagesToTab();
   }
@@ -821,14 +867,21 @@
     if (state.tabId < 0) return;
     var selected = qsa('.imgContainer.imgSelected:not(.excluded)');
     var urls = [];
+    var aliases = [];
     for (var i = 0; i < selected.length; i++) {
       var u = selected[i].getAttribute('imgsrc');
-      if (u) urls.push(u);
+      if (!u) continue;
+      urls.push(u);
+      // When the grid shows a full-resolution URL the page still renders the
+      // original one; send it along so the highlight matches.
+      var original = state.imageAliases[u];
+      if (original && original !== u) aliases.push(original);
     }
     try {
       chrome.tabs.sendMessage(state.tabId, {
         type: 'sendSelectedImages',
-        urls: urls
+        urls: urls,
+        aliases: aliases
       }, function () { if (chrome.runtime.lastError) {} });
     } catch (e) {}
   }
@@ -890,8 +943,9 @@
     obj[STORAGE_KEYS.CONVERT_FROM] = o.convertFrom;
     obj[STORAGE_KEYS.CONVERT_TO] = o.convertTo;
     obj[STORAGE_KEYS.DOWNLOAD_AS_ZIP] = o.downloadAsZip;
-    obj[STORAGE_KEYS.DOWNLOAD_OPTIONS_ENABLED] = !!(o.saveFolderName || o.saveFileName || o.convertFrom || o.saveFileAs !== 'SYSTEM_NAME');
-    setChecked('downloadseparatefolder', obj[STORAGE_KEYS.DOWNLOAD_OPTIONS_ENABLED]);
+    // The "Specify Download Options" flag belongs to the Preferences dialog
+    // alone. Writing it here would silently switch the preference on or off
+    // whenever the download menu is used.
     try { chrome.storage.local.set(obj); } catch (e) {}
   }
 
@@ -930,10 +984,21 @@
     }
   }
 
-  /** Get selected image URLs, or all visible URLs if none selected. */
+  /**
+   * Get the URLs to download.
+   *
+   * Explicit selections win, even when a filter currently hides them: the
+   * selection set is the record of what the user picked.  Only when nothing
+   * is selected does the batch fall back to every currently visible image.
+   */
   function getSelectedOrAllUrls() {
-    var selected = qsa('.imgContainer.imgSelected:not(.excluded)');
-    var nodes = selected.length ? selected : qsa('.imgContainer:not(.excluded)');
+    var selectedUrls = [];
+    state.selectedUrls.forEach(function (url) {
+      if (typeof url === 'string' && url) selectedUrls.push(url);
+    });
+    if (selectedUrls.length) return selectedUrls;
+
+    var nodes = qsa('.imgContainer:not(.excluded)');
     var urls = [];
     nodes.forEach(function (n) {
       var u = n.getAttribute('imgsrc');
@@ -1074,13 +1139,13 @@
   }
 
   /** Convert & download a single image (button on a card). */
-  function convertAndDownloadSingle(url, card) {
+  function convertAndDownloadSingle(url, card, index) {
     captureDownloadOptionsFromMenu();
     var options = Object.assign({}, state.downloadOptions);
     var convTo = options.convertTo || 'jpeg';
     convertImage(url, convTo, function (dataUrl) {
-      if (dataUrl) downloadDataUrl(dataUrl, url, 0, options);
-      else downloadSingleImage(url, 0, options);
+      if (dataUrl) downloadDataUrl(dataUrl, url, index, options);
+      else downloadSingleImage(url, index, options);
     });
   }
 
@@ -1157,8 +1222,11 @@
           filename = applyFilenameTokens(options.saveFileName, { name: original, ext: ext, index: index + 1, url: url });
         } else if (options.saveFileAs === 'ORIGINAL_FILE_NAME') filename = original + '.' + ext;
         else filename = 'imgi_' + (index + 1) + '_' + original + '.' + ext;
-        var folder = options.saveFolderName;
-        if (folder === 'basedonurl') {
+        // "basedonurl" groups the entries per domain inside the archive. A
+        // literal subfolder names the archive's own folder instead, so the
+        // entries must not repeat it.
+        var folder = '';
+        if (options.saveFolderName === 'basedonurl') {
           try { folder = new URL(url).hostname; } catch (e) { folder = ''; }
         }
         filename = sanitizeFilename(filename);
@@ -1191,6 +1259,29 @@
     return Promise.all(runners).then(function () { return results; });
   }
 
+  /**
+   * Build the archive name for a ZIP download.
+   *
+   * A custom-name template names the archive; a literal subfolder becomes the
+   * archive's own folder so the images are not nested twice.
+   *
+   * @param {object} options
+   * @returns {string} relative filename for the archive
+   */
+  function zipArchiveName(options) {
+    var base = 'images';
+    if (options.saveFileAs === 'CUSTOM_NAME' && options.saveFileName) {
+      base = applyFilenameTokens(options.saveFileName, { name: 'images', ext: 'zip', index: 1, url: '' });
+      base = base.replace(/\.zip$/i, '');
+    }
+    base = sanitizeFilename(base) || 'images';
+    var folder = options.saveFolderName;
+    if (folder && folder !== 'basedonurl') {
+      return sanitizeFilename(folder) + '/' + base + '.zip';
+    }
+    return base + '.zip';
+  }
+
   function downloadAsZip(urls) {
     if (!urls.length) return Promise.resolve();
     var options = Object.assign({}, state.downloadOptions);
@@ -1211,8 +1302,8 @@
       });
     }).then(function (blob) {
       var url = URL.createObjectURL(blob);
-      var zipName = options.saveFolderName && options.saveFolderName !== 'basedonurl' ? sanitizeFilename(options.saveFolderName) : 'images';
-      chrome.downloads.download({ url: url, filename: zipName + '.zip', conflictAction: 'uniquify' }, function () {
+      var zipName = zipArchiveName(options);
+      chrome.downloads.download({ url: url, filename: zipName, conflictAction: 'uniquify' }, function () {
         if (chrome.runtime.lastError) showDownloadError(chrome.runtime.lastError.message);
         setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
       });
@@ -1285,6 +1376,25 @@
     }
     state._pendingDownload = onConfirm;
     if (dlg) show(dlg);
+  }
+
+  /**
+   * Pick up a batch that the context menu held back for confirmation.
+   * The batch lives in session storage, so it survives the worker restart
+   * that happens between the right-click and the UI opening.
+   */
+  function consumePendingBatch() {
+    try {
+      if (!chrome.storage || !chrome.storage.session) return;
+      chrome.storage.session.get(PENDING_BATCH_KEY, function (cfg) {
+        var urls = cfg && cfg[PENDING_BATCH_KEY];
+        if (!Array.isArray(urls) || !urls.length) return;
+        try { chrome.storage.session.remove(PENDING_BATCH_KEY); } catch (e) { /* ignore */ }
+        showManyFilesDialog(urls.length, function () {
+          runDownloads(urls);
+        });
+      });
+    } catch (e) { /* session storage unavailable */ }
   }
 
   // ---------------------------------------------------------------------------
@@ -1399,7 +1509,63 @@
     if (el) el.checked = !!v;
   }
 
-  /** Wire preferences dialog: open, save, cancel, side-panel toggle. */
+  /**
+   * Format a Chrome shortcut string for display ("Ctrl+Shift+Y" -> "Ctrl+⇧+Y").
+   * @param {string} shortcut
+   * @returns {string}
+   */
+  function formatShortcut(shortcut) {
+    if (!shortcut) return '';
+    var parts = String(shortcut).split('+');
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var key = parts[i].trim();
+      if (!key) continue;
+      var lower = key.toLowerCase();
+      if (lower === 'command' || lower === 'cmd' || lower === 'meta') out.push('⌘');
+      else if (lower === 'ctrl' || lower === 'control') out.push('Ctrl');
+      else if (lower === 'shift') out.push('⇧');
+      else if (lower === 'alt' || lower === 'option') out.push('⌥');
+      else if (lower === 'macctrl') out.push('⌃');
+      else out.push(key.toUpperCase());
+    }
+    return out.join('+');
+  }
+
+  /**
+   * Show the shortcut that actually opens the extension on this platform.
+   * The badge used to be a hardcoded macOS shortcut, which is wrong on
+   * Windows and Linux.
+   */
+  function updateHotkeyBadge() {
+    var badge = byId('openHotKeyPrefs');
+    if (!badge) return;
+    var apply = function (shortcut) {
+      var text = formatShortcut(shortcut);
+      badge.textContent = text || '—';
+      badge.setAttribute('data-shortcut', text);
+      badge.setAttribute('title', text ? 'Keyboard shortcut: ' + text : 'Keyboard shortcut');
+      badge.setAttribute('aria-label', text ? 'Keyboard shortcut: ' + text : 'Keyboard shortcut');
+    };
+    try {
+      if (chrome.commands && chrome.commands.getAll) {
+        chrome.commands.getAll(function (commands) {
+          var found = '';
+          for (var i = 0; i < (commands || []).length; i++) {
+            if (commands[i] && commands[i].name === '_execute_action' && commands[i].shortcut) {
+              found = commands[i].shortcut;
+              break;
+            }
+          }
+          apply(found);
+        });
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    apply('');
+  }
+
+  /** Wire up the Preferences dialog: open, save, cancel, side-panel toggle. */
   function wirePreferences() {
     var showBtn = byId('showPrefs');
     var prefsDiv = byId('prefsDiv');
@@ -1423,6 +1589,24 @@
     if (cancelBtn) cancelBtn.addEventListener('click', function () {
       hide(prefsDiv);
     });
+
+    // The hotkey badge opens Chrome's own shortcut list.
+    var hotkeyLink = byId('openHotKeyPrefs');
+    if (hotkeyLink) {
+      hotkeyLink.addEventListener('click', function (e) {
+        e.preventDefault();
+        var text = hotkeyLink.getAttribute('data-shortcut') || hotkeyLink.textContent || '';
+        try {
+          chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }, function () {
+            if (chrome.runtime.lastError) {
+              showDownloadError('Open chrome://extensions/shortcuts to change the shortcut.');
+            }
+          });
+        } catch (err) {
+          showDownloadError('Open chrome://extensions/shortcuts to change the shortcut.');
+        }
+      });
+    }
   }
 
   /** Read the preferences dialog checkboxes and persist them. */

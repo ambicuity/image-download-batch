@@ -9,7 +9,7 @@
 ## Entrypoints & architecture
 
 - `manifest.json` — defines the service worker (`bg-entry.js`), popup (`popup.html`), content script (`inject.js`), and keyboard shortcut `Ctrl+Shift+Y` / `Cmd+Shift+Y`.
-- `bg-entry.js` — service worker bootstrap; opens welcome.html on install, then loads `filenameTokens.js`, `contextMenu.js`, and `background.js` via `importScripts`.
+- `bg-entry.js` — service worker bootstrap; opens welcome.html on install, then loads `filenameTokens.js`, `sanitize.js`, `downloadNaming.js`, `contextMenu.js`, and `background.js` via `importScripts`.
 - `background.js` — service worker core; orchestrates downloads, messaging, storage, display mode (popup/sidePanel), and download filename shaping.
 - `popup.html` + `popup.js` + `popup.css` + `popup-bridge.js` — popup UI and side-panel logic (preferences include `displayMode: sidePanel`).
 - **Content scripts**
@@ -17,6 +17,7 @@
   - `imageScraper.js` — injected on demand by the popup and context menu to collect images from the DOM (img, srcset, CSS backgrounds, SVGs, shadow DOM, lazy-loaded, meta tags, etc.).
   - `captureSelection.js` — area-screenshot helper injected on demand for side-panel mode.
 - `filenameTokens.js` — resolves filename templates for custom download names.
+- `downloadNaming.js` — shared download-naming helpers (`shapeDownloadFilename`, `resolveFinalName`, `inferImageExtension`, `resolveSubfolder`); used by both the worker and the context menu so every route names files identically.
 - `contextMenu.js` — "Download all images on this page" right-click menu action.
 - `sanitize.js` — filename sanitizer for filesystem-safe names.
 - `welcome.html` + `welcome.js` — onboarding page shown on first install.

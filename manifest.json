@@ -13,6 +13,7 @@
    },
    "commands": {
       "_execute_action": {
+         "description": "Open Image Download - Batch",
          "suggested_key": {
             "default": "Ctrl+Shift+Y",
             "mac": "Command+Shift+Y"

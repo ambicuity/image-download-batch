@@ -5,5 +5,7 @@ chrome.runtime.onInstalled.addListener(function (details) {
 });
 
 importScripts('filenameTokens.js');
+importScripts('sanitize.js');
+importScripts('downloadNaming.js');
 importScripts('contextMenu.js');
 importScripts('background.js');

@@ -54,6 +54,7 @@ jobs:
       - name: Run tests
         run: |
           node --test docs/superpowers/tests/bug-regressions.test.cjs
+          node --test docs/superpowers/tests/bug-regressions-3.test.cjs
           for t in dedupeUrls filenameTokens flattenDedupeImages upgradeToLargest; do
             node "docs/superpowers/tests/$t.test.cjs"
           done

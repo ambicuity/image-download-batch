@@ -17,7 +17,7 @@ trap 'rm -rf "$STAGE"' EXIT
 # --- runtime root files (fail if a required one is missing) ---
 ROOT_FILES=(
   manifest.json
-  bg-entry.js background.js contextMenu.js filenameTokens.js
+  bg-entry.js background.js contextMenu.js filenameTokens.js downloadNaming.js
   popup.html popup.css popup.js popup-bridge.js
   inject.js imageScraper.js captureSelection.js sanitize.js
   welcome.html welcome.js
